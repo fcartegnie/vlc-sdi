@@ -79,6 +79,17 @@ struct decoder_sys_t
     int level;
 
     vlc_sem_t sem_mt;
+
+
+    int coded_frame;
+    struct {
+        int frame;
+        int seq;
+        size_t len;
+        uint8_t data[256];
+    } cc[30];
+
+    int seq;
 };
 
 #ifdef HAVE_AVCODEC_MT
@@ -519,6 +530,7 @@ int InitVideoDec( decoder_t *p_dec, AVCodecContext *p_context,
     p_sys->i_pts = VLC_TS_INVALID;
     p_sys->b_first_frame = true;
     p_sys->i_late_frames = 0;
+    p_sys->seq = -1;
 
     /* Set output properties */
     p_dec->fmt_out.i_cat = VIDEO_ES;
@@ -702,6 +714,192 @@ static void update_late_frame_count( decoder_t *p_dec, block_t *p_block, mtime_t
 
 
 /*****************************************************************************
+ * CC Stuff:
+ *****************************************************************************/
+static int nal_read_sei_header(block_t *nal)
+{
+    int val = 0;
+    while (nal->i_buffer > 1) { /* The 1 is for rbsp trailing bits */
+        const int byte = *nal->p_buffer++;
+        nal->i_buffer--;
+        val += byte;
+        if (byte != 0xff)
+            break;
+    }
+    return val;
+}
+
+static const uint8_t start_code[4] = { 0, 0, 0, 1 };
+
+static block_t *nal_decode(uint8_t *buf, size_t len)
+{
+    block_t *nal = block_Alloc(len);
+    if (!nal)
+        return NULL;
+
+    const uint8_t *end = &buf[len];
+    nal->i_buffer = 0;
+
+
+    /* decode NAL */
+    static const uint8_t emulation_prevention_three_byte[3] = { 0, 0, 3 };
+    while (buf < end && (buf > end - 4 || memcmp(buf, start_code, 4))) {
+        if (buf < end - 3 && !memcmp(buf, emulation_prevention_three_byte, 3)) {
+            nal->p_buffer[nal->i_buffer++] = 0;
+            nal->p_buffer[nal->i_buffer++] = 0;
+            buf += 3;
+        } else {
+            nal->p_buffer[nal->i_buffer++] = *buf++;
+        }
+    }
+
+    return nal;
+}
+
+static int get_seq(uint8_t *buf, size_t size)
+{
+    for (size_t i = 7; i < size - 2; i += 3)
+        if (buf[i] == (0xfc | 3)) /* DTVCC packet start */
+            return (buf[i+1] >> 6) & 3;
+
+    return -1;
+}
+
+static void print(uint8_t *buf, int len)
+{
+    int dtv_size = 0;
+    int words = 0;
+    int e608 = 0;
+    for (int j = 0; j < len / 3; j++) {
+        int field = buf[3*j] & 3;
+        if (field <= 1) {
+            e608 = 1;
+            int c1 = buf[3*j+1] & 0x7f;
+            if (c1 < 0x20) c1 = '.';
+            int c2 = buf[3*j+2] & 0x7f;
+            if (c2 < 0x20) c2 = '.';
+            printf(" %.2x %.2x (%c %c)", buf[3*j+1], buf[3*j+2], c1, c2 );
+            continue;
+        }
+        if (field > 1) {
+            if (field == 3) {
+                dtv_size = (buf[3*j+1] & 0x3f) * 2 - 1;
+            }
+            if (dtv_size == 0)
+                continue;
+            if (field == 2) {
+                int c1 = buf[3*j+1] & 0x7f;
+                if (c1 < 0x20) c1 = '.';
+                int c2 = buf[3*j+2] & 0x7f;
+                if (c2 < 0x20) c2 = '.';
+                printf(" %.2x %.2x (%c %c)", buf[3*j+1], buf[3*j+2], c1, c2 );
+            }
+            words += 2;
+            if (words >= dtv_size)
+                break;
+        }
+    }
+    if (words || e608)
+        printf("\n");
+}
+
+
+static void GetH264CC(block_t *block, decoder_sys_t *p_sys)
+{
+    size_t len = block->i_buffer;
+    uint8_t *buf = block->p_buffer;
+    block_t *nal = NULL;
+
+    while (len > 5) {
+        if (memcmp(buf, start_code, 4)) {
+            len--;
+            buf++;
+            continue;
+        }
+
+        /* NAL found */
+
+        buf += 4;
+        len -= 4;
+
+        if ((buf[0] & 0x1f) != 6)
+            continue;
+
+        nal = nal_decode(++buf, --len);
+        if (!nal)
+            return;
+        size_t nal_size = nal->i_buffer;
+
+        /* Look for user_data_registered_itu_t_t35 */
+
+        int type = 0;
+        for(;;) {
+            type = nal_read_sei_header(nal);
+            size_t size = nal_read_sei_header(nal);
+
+            if (type == 4 && size > 7) {
+                nal->i_buffer = size;
+                break;
+            }
+
+            if (nal->i_buffer <= 1 || size > nal->i_buffer + 1) {
+                break;
+            }
+
+            nal->i_buffer -= size;
+            nal->p_buffer += size;
+        }
+
+        if (type == 4 && nal->i_buffer > 7) {
+            break;
+        } else {
+            block_Release(nal);
+            len -= nal_size;
+        }
+    }
+
+    if (len <= 5)
+        return;
+
+    /* user_data_registered_itu_t_t35 packet */
+
+    static const uint8_t dvb1_data_start_code[] = {
+        0xb5,
+        0x00, 0x31,
+        0x47, 0x41, 0x39, 0x34
+    };
+    if (memcmp(nal->p_buffer, dvb1_data_start_code, 7))
+        return;
+
+    nal->p_buffer += 3;
+    nal->i_buffer -= 3;
+
+    int i;
+    for (i = 0; i < 30; i++) {
+        if (p_sys->cc[i].len == 0)
+            break;
+    }
+    if (i == 30) {
+        //abort();
+
+        // flush
+        i = 0;
+        memset(&p_sys->cc, 0, sizeof(p_sys->cc));
+    }
+
+
+    p_sys->cc[i].frame = p_sys->coded_frame ;
+    memcpy(p_sys->cc[i].data, nal->p_buffer, nal->i_buffer);
+    p_sys->cc[i].len = nal->i_buffer;
+    p_sys->cc[i].seq = get_seq(p_sys->cc[i].data, p_sys->cc[i].len);
+
+    //printf("STORE %d :", number);
+    //print(&nal->p_buffer[7], nal->i_buffer);
+
+    block_Release(nal);
+}
+
+/*****************************************************************************
  * DecodeVideo: Called to decode one or more frames
  *****************************************************************************/
 static picture_t *DecodeVideo( decoder_t *p_dec, block_t **pp_block )
@@ -738,6 +936,37 @@ static picture_t *DecodeVideo( decoder_t *p_dec, block_t **pp_block )
 
     if( !check_block_validity( p_sys, p_block ) )
         return NULL;
+
+    if( p_block)
+    {
+        if( p_block->i_flags & (BLOCK_FLAG_DISCONTINUITY|BLOCK_FLAG_CORRUPTED) )
+        {
+            p_sys->i_pts = VLC_TS_INVALID; /* To make sure we recover properly */
+
+            p_sys->i_late_frames = 0;
+            if( p_block->i_flags & BLOCK_FLAG_CORRUPTED )
+            {
+                block_Release( p_block );
+                return NULL;
+            }
+        }
+
+        if( p_block->i_flags & BLOCK_FLAG_PREROLL )
+        {
+            /* Do not care about late frames when prerolling
+             * TODO avoid decoding of non reference frame
+             * (ie all B except for H264 where it depends only on nal_ref_idc) */
+            p_sys->i_late_frames = 0;
+        }
+
+        //printf("CODEC %4.4s %d bytes\n", (char*)&p_dec->fmt_in.i_codec, (*pp_block)->i_buffer);
+        if (p_dec->fmt_in.i_codec == VLC_CODEC_H264) {
+            GetH264CC(p_block, p_sys);
+        }
+
+        if (p_block->i_buffer)
+            p_sys->coded_frame++;
+    }
 
     current_time = mdate();
     if( p_dec->b_frame_drop_allowed &&  check_block_being_late( p_sys, p_block, current_time) )
@@ -992,6 +1221,28 @@ static picture_t *DecodeVideo( decoder_t *p_dec, block_t **pp_block )
         p_pic->i_nb_fields = 2 + frame->repeat_pict;
         p_pic->b_progressive = !frame->interlaced_frame;
         p_pic->b_top_field_first = frame->top_field_first;
+
+        //printf("Looking PIC %d\n", frame->coded_picture_number);
+        int i = 0;
+        for (int i = 0; i < 30; i++)
+            if (p_sys->cc[i].frame == frame->coded_picture_number) {
+                int seq = p_sys->cc[i].seq;
+                int expected_seq = (p_sys->seq == -1) ? seq : ((p_sys->seq+1) & 3);
+                if (seq != -1 && seq != expected_seq) {
+                    printf("[%d] : expect %d got %d\n", i, expected_seq, seq);
+                }
+                cc_Extract(&p_pic->cc, true, p_sys->cc[i].data, p_sys->cc[i].len);
+
+                //printf("FOUND %d ", frame->coded_picture_number);
+                //print(p_pic->cc.p_data, p_pic->cc.i_data);
+
+                p_sys->seq = p_sys->cc[i].seq;
+                p_sys->cc[i].len = 0;
+                break;
+            }
+        if (i == 30) {
+            //printf("CC NOT FOUND\n");
+        }
 
         av_frame_free(&frame);
 
