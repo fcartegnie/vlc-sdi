@@ -823,6 +823,7 @@ static int ThreadDisplayRenderPicture(vout_thread_t *vout, bool is_forced)
     vout_display_t *vd = vout->p->display.vd;
 
     picture_t *torender = picture_Hold(vout->p->displayed.current);
+    cc_data_t cc = torender->cc;
 
     vout_chrono_Start(&vout->p->render);
 
@@ -1012,6 +1013,9 @@ static int ThreadDisplayRenderPicture(vout_thread_t *vout, bool is_forced)
 
     /* Display the direct buffer returned by vout_RenderPicture */
     vout->p->displayed.date = mdate();
+
+    todisplay->cc = cc;
+
     vout_display_Display(vd, todisplay, subpic);
 
     vout_statistic_AddDisplayed(&vout->p->statistic, 1);

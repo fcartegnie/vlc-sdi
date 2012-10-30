@@ -304,6 +304,7 @@ void picture_Release( picture_t *p_picture )
     if( refs > 1 )
         return;
 
+    p_picture->cc.i_data = 0;
     PictureDestroyContext( p_picture );
     assert( priv->gc.destroy != NULL );
     priv->gc.destroy( p_picture );
