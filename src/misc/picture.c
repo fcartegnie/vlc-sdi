@@ -274,9 +274,11 @@ picture_t *picture_Hold( picture_t *p_picture )
 
 void picture_Release( picture_t *p_picture )
 {
-    if( vlc_atomic_dec( &p_picture->gc.refcount ) == 0 &&
-        p_picture->gc.pf_destroy )
-        p_picture->gc.pf_destroy( p_picture );
+    if( vlc_atomic_dec( &p_picture->gc.refcount ) == 0 ) {
+        p_picture->cc.i_data = 0;
+        if (p_picture->gc.pf_destroy )
+            p_picture->gc.pf_destroy( p_picture );
+    }
 }
 
 bool picture_IsReferenced( picture_t *p_picture )

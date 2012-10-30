@@ -881,6 +881,7 @@ static int ThreadDisplayRenderPicture(vout_thread_t *vout, bool is_forced)
 
     vout_chrono_Start(&vout->p->render);
 
+    cc_data_t cc = torender->cc;
     vlc_mutex_lock(&vout->p->filter.lock);
     picture_t *filtered = filter_chain_VideoFilter(vout->p->filter.chain_interactive, torender);
     vlc_mutex_unlock(&vout->p->filter.lock);
@@ -1048,6 +1049,10 @@ static int ThreadDisplayRenderPicture(vout_thread_t *vout, bool is_forced)
 
     /* Display the direct buffer returned by vout_RenderPicture */
     vout->p->displayed.date = mdate();
+    if (sys->display.filtered)
+        sys->display.filtered->cc = cc;
+    else
+        direct->cc = cc;
     vout_display_Display(vd,
                          sys->display.filtered ? sys->display.filtered
                                                 : direct,
