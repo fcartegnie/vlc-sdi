@@ -33,6 +33,7 @@
 
 #include <vlc_es.h>
 #include <vlc_atomic.h>
+#include "../modules/codec/cc.h"
 
 /** Description of a planar graphic field */
 typedef struct plane_t
@@ -92,6 +93,8 @@ struct picture_t
     bool            b_top_field_first;             /**< which field is first */
     unsigned int    i_nb_fields;                  /**< # of displayed fields */
     /**@}*/
+
+    cc_data_t       cc;
 
     /** Private data - the video output plugin might want to put stuff here to
      * keep track of the picture */
