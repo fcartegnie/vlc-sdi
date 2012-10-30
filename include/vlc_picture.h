@@ -32,6 +32,7 @@
  */
 
 #include <vlc_es.h>
+#include "../modules/codec/cc.h"
 
 /** Description of a planar graphic field */
 typedef struct plane_t
@@ -87,6 +88,8 @@ struct picture_t
     void          * context;          /**< video format-specific data pointer,
              * must point to a (void (*)(void*)) pointer to free the context */
     /**@}*/
+
+    cc_data_t       cc;
 
     /** Private data - the video output plugin might want to put stuff here to
      * keep track of the picture */
