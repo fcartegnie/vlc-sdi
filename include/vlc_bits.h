@@ -31,17 +31,17 @@
 
 typedef struct bs_s
 {
-    uint8_t *p_start;
+    const uint8_t *p_start;
     uint8_t *p;
-    uint8_t *p_end;
+    const uint8_t *p_end;
 
     ssize_t  i_left;    /* i_count number of available bits */
 } bs_t;
 
-static inline void bs_init( bs_t *s, const void *p_data, size_t i_data )
+static inline void bs_init( bs_t *s, const uint8_t *p_data, size_t i_data )
 {
-    s->p_start = (void *)p_data;
-    s->p       = s->p_start;
+    s->p_start = p_data;
+    s->p       = (uint8_t*)s->p_start;
     s->p_end   = s->p_start + i_data;
     s->i_left  = 8;
 }
