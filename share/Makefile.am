@@ -4,7 +4,7 @@ EXTRA_DIST =
 
 appdatadir = $(datadir)/applications
 if !HAVE_WIN32
-appdata_DATA = vlc.desktop
+#appdata_DATA = vlc.desktop
 endif
 EXTRA_DIST += vlc.desktop.in
 CLEANFILES += $(appdata_DATA)
