@@ -981,7 +981,14 @@ unsigned vlc_GetCPUCount(void)
     if (sched_getaffinity (0, sizeof (cpu), &cpu) < 0)
         return 1;
 
+#if 1 // old glibc
+    unsigned count = 0;
+    for (unsigned i = 0; i < CPU_SETSIZE; i++)
+        count += CPU_ISSET(i, &cpu) != 0;
+    return count;
+#else
     return CPU_COUNT (&cpu);
+#endif
 
 #elif defined(__SunOS)
     unsigned count = 0;
