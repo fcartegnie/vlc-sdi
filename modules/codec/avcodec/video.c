@@ -114,7 +114,6 @@ struct decoder_sys_t
 static void ffmpeg_InitCodec      ( decoder_t * );
 static void ffmpeg_CopyPicture    ( decoder_t *, picture_t *, AVFrame * );
 static int  ffmpeg_GetFrameBuf    ( struct AVCodecContext *, AVFrame * );
-static int  ffmpeg_ReGetFrameBuf( struct AVCodecContext *, AVFrame * );
 static void ffmpeg_ReleaseFrameBuf( struct AVCodecContext *, AVFrame * );
 static enum PixelFormat ffmpeg_GetFormat( AVCodecContext *,
                                           const enum PixelFormat * );
@@ -325,7 +324,7 @@ int InitVideoDec( decoder_t *p_dec, AVCodecContext *p_context,
     /* Always use our get_buffer wrapper so we can calculate the
      * PTS correctly */
     p_sys->p_context->get_buffer = ffmpeg_GetFrameBuf;
-    p_sys->p_context->reget_buffer = ffmpeg_ReGetFrameBuf;
+    p_sys->p_context->reget_buffer = avcodec_default_reget_buffer;
     p_sys->p_context->release_buffer = ffmpeg_ReleaseFrameBuf;
     p_sys->p_context->opaque = p_dec;
 
@@ -770,24 +769,18 @@ picture_t *DecodeVideo( decoder_t *p_dec, block_t **pp_block )
         picture_t *p_pic;
         AVPacket pkt;
 
-        /* Set the PTS/DTS in the context reordered_opaque field */
-        if( p_block->i_pts > VLC_TS_INVALID  )
-            p_context->reordered_opaque = (p_block->i_pts << 1) | 0;
-        else if( p_block->i_dts > VLC_TS_INVALID )
-            p_context->reordered_opaque = (p_block->i_dts << 1) | 1;
-        else
-            p_context->reordered_opaque = INT64_MIN;
-        p_sys->p_ff_pic->reordered_opaque = p_context->reordered_opaque;
-
-        /* Make sure we don't reuse the same timestamps twice */
-        p_block->i_pts =
-        p_block->i_dts = VLC_TS_INVALID;
-
         post_mt( p_sys );
 
         av_init_packet( &pkt );
         pkt.data = p_block->p_buffer;
         pkt.size = p_block->i_buffer;
+        pkt.pts = p_block->i_pts;
+        pkt.dts = p_block->i_dts;
+
+        /* Make sure we don't reuse the same timestamps twice */
+        p_block->i_pts =
+        p_block->i_dts = VLC_TS_INVALID;
+
         i_used = avcodec_decode_video2( p_context, p_sys->p_ff_pic,
                                        &b_gotpicture, &pkt );
 
@@ -844,33 +837,11 @@ picture_t *DecodeVideo( decoder_t *p_dec, block_t **pp_block )
         }
 
         /* Compute the PTS */
-        mtime_t i_pts = VLC_TS_INVALID;
-        if( p_sys->p_ff_pic->reordered_opaque != INT64_MIN )
-        {
-            mtime_t i_ts = p_sys->p_ff_pic->reordered_opaque >> 1;
-            bool    b_dts = p_sys->p_ff_pic->reordered_opaque & 1;
-            if( b_dts )
-            {
-                if( !p_context->has_b_frames ||
-                    !p_sys->b_has_b_frames ||
-                    !p_sys->p_ff_pic->reference ||
-                    p_sys->i_pts <= VLC_TS_INVALID )
-                    i_pts = i_ts;
+        mtime_t i_pts =
+                    p_sys->p_ff_pic->pkt_pts;
+        if (i_pts <= VLC_TS_INVALID)
+            i_pts = p_sys->p_ff_pic->pkt_dts;
 
-                /* Guess what ? The rules are different for Real Video :( */
-                if( (p_dec->fmt_in.i_codec == VLC_CODEC_RV30 ||
-                     p_dec->fmt_in.i_codec == VLC_CODEC_RV40) &&
-                    p_sys->b_has_b_frames )
-                {
-                    i_pts = VLC_TS_INVALID;
-                    if(p_sys->p_ff_pic->reference) i_pts = i_ts;
-                }
-            }
-            else
-            {
-                i_pts = i_ts;
-            }
-        }
         if( i_pts <= VLC_TS_INVALID )
             i_pts = p_sys->i_pts;
 
@@ -1157,7 +1128,6 @@ static int ffmpeg_GetFrameBuf( struct AVCodecContext *p_context,
     picture_t *p_pic;
 
     /* */
-    p_ff_pic->reordered_opaque = p_context->reordered_opaque;
     p_ff_pic->opaque = NULL;
 
     if( p_sys->p_va )
@@ -1281,13 +1251,6 @@ no_dr:
     }
     post_mt( p_sys );
     return avcodec_default_get_buffer( p_context, p_ff_pic );
-}
-static int  ffmpeg_ReGetFrameBuf( struct AVCodecContext *p_context, AVFrame *p_ff_pic )
-{
-    p_ff_pic->reordered_opaque = p_context->reordered_opaque;
-
-    /* We always use default reget function, it works perfectly fine */
-    return avcodec_default_reget_buffer( p_context, p_ff_pic );
 }
 
 static void ffmpeg_ReleaseFrameBuf( struct AVCodecContext *p_context,
