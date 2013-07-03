@@ -43,16 +43,25 @@ static const char msg_type[4][9] = { "", " error", " warning", " debug" };
 # define GRAY     "\033[0m"
 static const char msg_color[4][8] = { WHITE, RED, YELLOW, GRAY };
 
+typedef struct
+{
+    int verbosity;
+    mtime_t i_start;
+} vlc_logger_sys_t;
+
 static void LogConsoleColor(void *opaque, int type, const vlc_log_t *meta,
                             const char *format, va_list ap)
 {
     FILE *stream = stderr;
-    int verbose = (intptr_t)opaque;
+    vlc_logger_sys_t *sys = opaque;
 
-    if (verbose < type)
+    if (sys->verbosity < type)
         return;
 
+    mtime_t now = mdate() - sys->i_start;
+
     flockfile(stream);
+    fprintf(stream, "[%6"PRId64".%.6"PRId64"] ", now / CLOCK_FREQ, now % CLOCK_FREQ);
     fprintf(stream, "["GREEN"%0*"PRIxPTR GRAY"] ", ptr_width,
             meta->i_object_id);
     if (meta->psz_header != NULL)
@@ -68,13 +77,16 @@ static void LogConsoleColor(void *opaque, int type, const vlc_log_t *meta,
 static void LogConsoleGray(void *opaque, int type, const vlc_log_t *meta,
                            const char *format, va_list ap)
 {
+    vlc_logger_sys_t *sys = opaque;
     FILE *stream = stderr;
-    int verbose = (intptr_t)opaque;
 
-    if (verbose < type)
+    if (sys->verbosity < type)
         return;
 
+    mtime_t now = mdate() - sys->i_start;
+
     flockfile(stream);
+    fprintf(stream, "[%6"PRId64".%.6"PRId64"] ", now / CLOCK_FREQ, now % CLOCK_FREQ);
     fprintf(stream, "[%0*"PRIxPTR"] ", ptr_width, meta->i_object_id);
     if (meta->psz_header != NULL)
         fprintf(stream, "[%s] ", meta->psz_header);
@@ -85,24 +97,36 @@ static void LogConsoleGray(void *opaque, int type, const vlc_log_t *meta,
     funlockfile(stream);
 }
 
+static void Close(void *opaque)
+{
+    vlc_logger_sys_t *sys = opaque;
+    free(sys);
+}
+
 static vlc_log_cb Open(vlc_object_t *obj, void **sysp)
 {
-    int verbosity = -1;
+    vlc_logger_sys_t *sys = malloc(sizeof(*sys));
+    sys->verbosity = -1;
 
     if (!var_InheritBool(obj, "quiet"))
     {
         const char *str = getenv("VLC_VERBOSE");
         if (str != NULL)
-           verbosity = atoi(str);
+           sys->verbosity = atoi(str);
         else
-            verbosity = var_InheritInteger(obj, "verbose");
+            sys->verbosity = var_InheritInteger(obj, "verbose");
     }
 
-    if (verbosity < 0)
+    if (sys->verbosity < 0)
+    {
+        free(sys);
         return NULL;
+    }
 
-    verbosity += VLC_MSG_ERR;
-    *sysp = (void *)(uintptr_t)verbosity;
+    sys->i_start = mdate();
+
+    sys->verbosity += VLC_MSG_ERR;
+    *sysp = (void *)sys;
 
 #if defined (HAVE_ISATTY) && !defined (_WIN32)
     if (isatty(STDERR_FILENO) && var_InheritBool(obj, "color"))
@@ -120,7 +144,7 @@ vlc_module_begin()
     set_category(CAT_ADVANCED)
     set_subcategory(SUBCAT_ADVANCED_MISC)
     set_capability("logger", 10)
-    set_callbacks(Open, NULL)
+    set_callbacks(Open, Close)
 
     add_bool("quiet", false, QUIET_TEXT, QUIET_LONGTEXT, false)
         change_short('q')

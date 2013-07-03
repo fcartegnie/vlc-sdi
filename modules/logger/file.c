@@ -42,6 +42,7 @@ typedef struct
     FILE *stream;
     const char *footer;
     int verbosity;
+    mtime_t i_start;
 } vlc_logger_sys_t;
 
 #define TEXT_FILENAME "vlc-log.txt"
@@ -58,7 +59,10 @@ static void LogText(void *opaque, int type, const vlc_log_t *meta,
     if (sys->verbosity < type)
         return;
 
+    mtime_t now = mdate() - sys->i_start;
+
     flockfile(stream);
+    fprintf(stream, "[%6"PRId64".%.6"PRId64"] ", now / CLOCK_FREQ, now % CLOCK_FREQ);
     fprintf(stream, "%s%s: ", meta->psz_module, msg_type[type]);
     vfprintf(stream, format, ap);
     putc_unlocked('\n', stream);
@@ -96,7 +100,10 @@ static void LogHtml(void *opaque, int type, const vlc_log_t *meta,
     if (sys->verbosity < type)
         return;
 
+    mtime_t now = mdate() - sys->i_start;
+
     flockfile(stream);
+    fprintf(stream, "[%6"PRId64".%.6"PRId64"] ", now / CLOCK_FREQ, now % CLOCK_FREQ);
     fprintf(stream, "%s%s: <span style=\"color: #%06x\">",
             meta->psz_module, msg_type[type], color[type]);
     /* FIXME: encode special ASCII characters */
@@ -128,6 +135,7 @@ static vlc_log_cb Open(vlc_object_t *obj, void **restrict sysp)
     vlc_log_cb cb = LogText;
     sys->footer = TEXT_FOOTER;
     sys->verbosity = verbosity;
+    sys->i_start = mdate();
 
     char *mode = var_InheritString(obj, "logmode");
     if (mode != NULL)
