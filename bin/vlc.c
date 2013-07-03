@@ -204,8 +204,8 @@ int main( int i_argc, const char *ppsz_argv[] )
     const char *argv[i_argc + 2];
     int argc = 0;
 
-    argv[argc++] = "--no-ignore-config";
-    argv[argc++] = "--media-library";
+    //argv[argc++] = "--no-ignore-config";
+    //argv[argc++] = "--media-library";
     ppsz_argv++; i_argc--; /* skip executable path */
 #ifdef __APPLE__
     /* When VLC.app is run by double clicking in Mac OS X, the 2nd arg
@@ -240,9 +240,9 @@ int main( int i_argc, const char *ppsz_argv[] )
     libvlc_set_exit_handler (vlc, vlc_kill, &self);
     libvlc_set_user_agent (vlc, "VLC media player", "VLC/"PACKAGE_VERSION);
 
-    libvlc_add_intf (vlc, "hotkeys,none");
+    //libvlc_add_intf (vlc, "hotkeys,none");
 #if !defined __APPLE__ && !defined (__OS2__)
-    libvlc_add_intf (vlc, "globalhotkeys,none");
+    //libvlc_add_intf (vlc, "globalhotkeys,none");
 #endif
 #ifdef HAVE_DBUS
     libvlc_add_intf (vlc, "dbus,none");
