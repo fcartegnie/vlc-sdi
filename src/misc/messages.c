@@ -200,8 +200,18 @@ static void PrintColorMsg (void *d, int type, const vlc_log_t *p_item,
 
     int canc = vlc_savecancel ();
 
+    mtime_t now = mdate();
+    static mtime_t start;
+    if (!start)
+        start = now;
+
+    now -= start;
+    mtime_t secs = now / CLOCK_FREQ;
+    int msecs = now % CLOCK_FREQ;
+
     flockfile (stream);
-    fprintf (stream, "["GREEN"%p"GRAY"] ", (void *)p_item->i_object_id);
+    fprintf (stream, "[%6"PRId64".%.6d] ["GREEN"%p"GRAY"] ",
+        secs, msecs, (void *)p_item->i_object_id);
     if (p_item->psz_header != NULL)
         utf8_fprintf (stream, "[%s] ", p_item->psz_header);
     utf8_fprintf (stream, "%s %s%s: %s", p_item->psz_module,
@@ -226,8 +236,18 @@ static void PrintMsg (void *d, int type, const vlc_log_t *p_item,
 
     int canc = vlc_savecancel ();
 
+    mtime_t now = mdate();
+    static mtime_t start;
+    if (!start)
+        start = now;
+
+    now -= start;
+    mtime_t secs = now / CLOCK_FREQ;
+    int msecs = now % CLOCK_FREQ;
+
     flockfile (stream);
-    fprintf (stream, "[%p] ", (void *)p_item->i_object_id);
+    fprintf (stream, "[%6"PRId64".%.6d] [%p] ",
+        secs, msecs, (void *)p_item->i_object_id);
     if (p_item->psz_header != NULL)
         utf8_fprintf (stream, "[%s] ", p_item->psz_header);
     utf8_fprintf (stream, "%s %s%s: ", p_item->psz_module,
