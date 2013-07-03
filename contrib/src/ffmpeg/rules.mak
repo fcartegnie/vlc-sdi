@@ -1,6 +1,6 @@
 # FFmpeg
 
-HASH=HEAD
+HASH=95a57d2
 
 #FFMPEG_SNAPURL := http://git.videolan.org/?p=ffmpeg.git;a=snapshot;h=$(HASH);sf=tgz
 FFMPEG_SNAPURL := http://git.libav.org/?p=libav.git;a=snapshot;h=$(HASH);sf=tgz
@@ -127,8 +127,8 @@ endif
 $(TARBALLS)/ffmpeg-$(HASH).tar.gz:
 	$(call download,$(FFMPEG_SNAPURL))
 
-.sum-ffmpeg: $(TARBALLS)/ffmpeg-$(HASH).tar.gz
-	$(warning Not implemented.)
+.sum-ffmpeg: $(TARBALLS)/ffmpeg-$(HASH).tar.gz $(SRC)/ffmpeg/SHA512SUMS
+	zcat $(TARBALLS)/ffmpeg-$(HASH).tar.gz | $(SHA512SUM) $(SRC)/ffmpeg/SHA512SUMS
 	touch $@
 
 ffmpeg: ffmpeg-$(HASH).tar.gz .sum-ffmpeg
