@@ -32,6 +32,7 @@
 
 #include <vlc_fixups.h>
 #include <cinttypes>
+#include <cassert>
 
 #include <vlc_common.h>
 #include <vlc_plugin.h>
@@ -615,6 +616,134 @@ static void v210_convert(void *frame_bytes, picture_t *pic, int dst_stride)
     }
 }
 
+/* 708 */
+static void send_CC(struct decklink_sys_t *decklink_sys, cc_data_t *cc, uint8_t *buf)
+{
+    uint8_t cc_count = cc->i_data / 3;
+    if (cc_count == 0)
+        return;
+
+    assert(cc_count == 20);
+    #if 0
+    if (cc_count < 20) {
+        printf("PADDING\n");
+        for(int i = cc_count; i < 20; i++) {
+            cc->p_data[3*i + 0] = 0xfa;
+            cc->p_data[3*i + 0] = 0x00;
+            cc->p_data[3*i + 0] = 0x00;
+        }
+        cc_count = 20;
+        cc->i_data = 3 * 20;
+    }
+    #endif
+
+    uint16_t len = 6 /* vanc header */ + 9 /* cdp header */ + 3 * cc_count +/* cc_data */
+        4 /* cdp footer */ + 1 /* vanc checksum */;
+
+    static uint16_t hdr = 0; /* cdp counter */
+    size_t s = ((len + 5) / 6) * 6; /* align to 6 for v210 conversion */
+
+    uint16_t *cdp = new uint16_t[s];
+
+    unsigned int num, den;
+    vlc_ureduce(&num, &den, decklink_sys->timescale, decklink_sys->frameduration, 0);
+
+    int rate;
+    if (num == 24000 && den == 1001) {
+        rate = 1;
+    } else if (num == 24 && den == 1) {
+        rate = 2;
+    } else if (num == 25 && den == 1) {
+        rate = 3;
+    } else if (num == 30000 && den == 1001) {
+        rate = 4;
+    } else if (num == 30 && den == 1) {
+        rate = 5;
+    } else if (num == 50 && den == 1) {
+        rate = 6;
+    } else if (num == 60000 && den == 1001) {
+        rate = 7;
+    } else if (num == 60 && den == 1) {
+        rate = 8;
+    } else {
+        printf("Unknown frame rate %d / %d = %.3f\n", num, den, (float)num / den);
+        return;
+    }
+
+    uint16_t cdp_header[6+9] = {
+        /* VANC header = 6 words */
+        0x000, 0x3ff, 0x3ff, /* Ancillary Data Flag */
+
+        /* following words need parity bits */
+
+        0x61, /* Data ID */
+        0x01, /* Secondary Data I D= CEA-708 */
+        (uint16_t)(len - 6 - 1), /* Data Count (not including VANC header) */
+
+        /* cdp header */
+
+        0x96, // header id
+        0x69,
+        (uint16_t)(len - 6 - 1),
+        (uint16_t)((rate << 4) | 0x0f),
+        0x43, // cc_data_present | caption_service_active | reserved
+        (uint16_t)(hdr >> 8),
+        (uint16_t)(hdr & 0xff),
+        0x72, // ccdata_id
+        (uint16_t)(0xe0 | cc_count), // cc_count
+    };
+
+    /* cdp header */
+    memcpy(cdp, cdp_header, sizeof(cdp_header));
+
+    /* cdp data */
+    for (size_t i = 0; i < cc_count; i++) { // copy cc_data
+        cdp[6+9+3*i+0] = cc->p_data[3*i+0] /*| 0xfc*/; // marker bits + cc_valid
+        cdp[6+9+3*i+1] = cc->p_data[3*i+1];
+        cdp[6+9+3*i+2] = cc->p_data[3*i+2];
+    }
+
+    /* cdp footer */
+    cdp[len-5] = 0x74; // footer id
+    cdp[len-4] = hdr >> 8;
+    cdp[len-3] = hdr & 0xff;
+    hdr++;
+
+    /* cdp checksum */
+    uint8_t sum = 0;
+    for (uint16_t i = 6; i < len - 2; i++) {
+        sum += cdp[i];
+        sum &= 0xff;
+    }
+    cdp[len-2] = sum ? 256 - sum : 0;
+
+    /* parity bit */
+    for (uint16_t i = 3; i < len - 1; i++)
+        cdp[i] |= parity(cdp[i]) ? 0x100 : 0x200;
+
+    /* vanc checksum */
+    uint16_t vanc_sum = 0;
+    for (uint16_t i = 3; i < len - 1; i++) {
+        vanc_sum += cdp[i];
+        vanc_sum &= 0x1ff;
+    }
+    cdp[len - 1] = vanc_sum | ((~vanc_sum & 0x100) << 1);
+
+    /* pad */
+    for (size_t i = len; i < s; i++)
+        cdp[i] = 0x040;
+
+    /* convert to v210 and write into VBI line 15 of VANC */
+    for (size_t w = 0; w < s / 6 ; w++) {
+        put_le32(&buf, cdp[w*6+0] << 10);
+        put_le32(&buf, cdp[w*6+1] | (cdp[w*6+2] << 20));
+        put_le32(&buf, cdp[w*6+3] << 10);
+        put_le32(&buf, cdp[w*6+4] | (cdp[w*6+5] << 20));
+    }
+
+    delete[] cdp;
+}
+
 static void DisplayVideo(vout_display_t *vd, picture_t *picture, subpicture_t *)
 {
     vout_display_sys_t *sys = vd->sys;
@@ -672,9 +801,45 @@ static void DisplayVideo(vout_display_t *vd, picture_t *picture, subpicture_t *)
     pDLVideoFrame->GetBytes((void**)&frame_bytes);
     stride = pDLVideoFrame->GetRowBytes();
 
-    if (sys->tenbits)
+    if (sys->tenbits) {
+        IDeckLinkVideoFrameAncillary *vanc;
+        result = decklink_sys->p_output->CreateAncillaryData(
+                sys->tenbits ? bmdFormat10BitYUV : bmdFormat8BitYUV, &vanc);
+        if (result != S_OK) {
+            msg_Err(vd, "Failed to create vanc: %d", result);
+            goto end;
+        }
+
+        //for (int line = 1; line < 21; line++) {
+        { int line = 15;
+            void *buf;
+            result = vanc->GetBufferForVerticalBlankingLine(line, &buf);
+            if (result != S_OK) {
+                msg_Err(vd, "Failed to get VBI line %d: %d", line, result);
+                goto end;
+                //break;
+            }
+
+            send_CC(decklink_sys, &picture->cc, (uint8_t*)buf);
+
+            if (0 && picture->cc.i_data) {
+                printf("cc_count %d: ", picture->cc.i_data / 3);
+                for (int i = 0; i < picture->cc.i_data; i++)
+                    printf("%.2x ", picture->cc.p_data[i]);
+                printf("\n");
+            }
+        }
+
         v210_convert(frame_bytes, picture, stride);
-    else for(int y = 0; y < h; ++y) {
+
+        result = pDLVideoFrame->SetAncillaryData(vanc);
+        vanc->Release();
+        if (result != S_OK) {
+            msg_Err(vd, "Failed to set vanc: %d", result);
+            goto end;
+        }
+
+    } else for(int y = 0; y < h; ++y) {
         uint8_t *dst = (uint8_t *)frame_bytes + stride * y;
         const uint8_t *src = (const uint8_t *)picture->p[0].p_pixels +
             picture->p[0].i_pitch * y;
