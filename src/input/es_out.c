@@ -1859,7 +1859,6 @@ static void EsOutSelect( es_out_t *out, es_out_id_t *es, bool b_force )
                 {
                     /* Only select the language if it's in the list */
                     if( p_esprops->p_main_es == NULL ||
-                        current_es_idx < 0 || /* current es was not selected by lang prefs */
                         es_idx < current_es_idx || /* current es has lower lang prio */
                         (  es_idx == current_es_idx && /* lang is same, but es has higher prio */
                            p_esprops->p_main_es->fmt.i_priority < es->fmt.i_priority ) )
