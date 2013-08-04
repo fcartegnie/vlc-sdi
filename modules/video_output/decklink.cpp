@@ -46,6 +46,7 @@
 
 #include <vlc_block.h>
 #include <vlc_image.h>
+#include <vlc_network.h>
 #include <vlc_atomic.h>
 #include <vlc_aout.h>
 #include <arpa/inet.h>
@@ -169,6 +170,8 @@ struct decklink_sys_t
 
     /* XXX: workaround card clock drift */
     mtime_t offset;
+
+    int fd;
 };
 
 /*****************************************************************************
@@ -190,6 +193,8 @@ vlc_module_begin()
     set_section(N_("Decklink General Options"), NULL)
     add_integer(CFG_PREFIX "card-index", 0,
                 CARD_INDEX_TEXT, CARD_INDEX_LONGTEXT, true)
+    add_string(CFG_PREFIX "udp-monitor", "",
+                NULL, NULL, true)
 
     add_submodule ()
     set_description (N_("Decklink Video Output module"))
@@ -246,6 +251,23 @@ static struct decklink_sys_t *GetDLSys(vlc_object_t *obj)
             sys->offset = 0;
             sys->users = 0;
             sys->aconn = 0;
+            sys->fd = -1;
+            char *address = var_InheritString(obj, CFG_PREFIX "udp-monitor");
+            if (address) {
+                char *psz = strchr(address, ':');
+                int port = 0;
+                if (psz) {
+                    *psz++ = '\0';
+                    port = atoi(psz);
+                }
+                if (port <= 0)
+                    port = 1234;
+                msg_Dbg(obj, "Monitoring on %s : %d", address, port);
+                sys->fd = net_ConnectUDP(obj, address, port, -1 /* TTL? */);
+                if (sys->fd < 0)
+                    msg_Err(obj, "Couldn't enable monitoring (%m)");
+                free(address);
+            }
             vlc_mutex_init(&sys->lock);
             vlc_cond_init(&sys->cond);
             var_Create(libvlc, "decklink-sys", VLC_VAR_ADDRESS);
@@ -276,6 +298,9 @@ static void ReleaseDLSys(vlc_object_t *obj)
             sys->p_output->DisableAudioOutput();
             sys->p_output->Release();
         }
+
+        if (sys->fd > 0)
+            net_Close(sys->fd);
 
         free(sys);
         var_Destroy(libvlc, "decklink-sys");
@@ -615,14 +640,33 @@ static void v210_convert(void *frame_bytes, picture_t *pic, int dst_stride)
     }
 }
 
-/* 708 */
-static void send_CC(struct decklink_sys_t *decklink_sys, cc_data_t *cc, uint8_t *buf)
+static void report(vlc_object_t *obj, const char *str, uint64_t val)
 {
+    struct decklink_sys_t *decklink_sys = GetDLSys(obj);
+    int fd = decklink_sys->fd;
+
+    if (fd < 0)
+        return;
+
+    char *buf;
+    if (asprintf(&buf, "%s: %"PRId64"\n", str, val) < 0)
+        return;
+
+    net_Write(obj, fd, NULL, buf, strlen(buf));
+}
+#define report(obj, str, val) report(VLC_OBJECT(obj), str, val)
+
+/* 708 */
+static void send_CC(vout_display_t *vd, cc_data_t *cc, uint8_t *buf)
+{
+    struct decklink_sys_t *decklink_sys = GetDLSys(VLC_OBJECT(vd));
     uint8_t cc_count = cc->i_data / 3;
     if (cc_count == 0)
         return;
 
     assert(cc_count == 20);
+
+    report(vd, "CC COUNT", 20);
     #if 0
     if (cc_count < 20) {
         printf("PADDING\n");
@@ -758,6 +802,7 @@ static void DisplayVideo(vout_display_t *vd, picture_t *picture, subpicture_t *)
     picture_t *orig_picture = picture;
 
     if (now - picture->date > sys->nosignal_delay * CLOCK_FREQ) {
+        report(vd, "NO SIGNAL", picture->date);
         msg_Dbg(vd, "no signal");
         if (sys->pic_nosignal) {
             picture = sys->pic_nosignal;
@@ -795,9 +840,12 @@ static void DisplayVideo(vout_display_t *vd, picture_t *picture, subpicture_t *)
 
     if (result != S_OK) {
         msg_Err(vd, "Failed to create video frame: 0x%X", result);
+        report(vd, "ERROR PICTURE", (uint64_t)result);
         pDLVideoFrame = NULL;
         goto end;
     }
+
+    report(vd, "PICTURE", picture->date);
 
     void *frame_bytes;
     pDLVideoFrame->GetBytes((void**)&frame_bytes);
@@ -822,7 +870,7 @@ static void DisplayVideo(vout_display_t *vd, picture_t *picture, subpicture_t *)
                 //break;
             }
 
-            send_CC(decklink_sys, &picture->cc, (uint8_t*)buf);
+            send_CC(vd, &picture->cc, (uint8_t*)buf);
 
             if (0 && picture->cc.i_data) {
                 printf("cc_count %d: ", picture->cc.i_data / 3);
@@ -867,6 +915,8 @@ static void DisplayVideo(vout_display_t *vd, picture_t *picture, subpicture_t *)
     BMDTimeValue decklink_now;
     double speed;
     decklink_sys->p_output->GetScheduledStreamTime (CLOCK_FREQ, &decklink_now, &speed);
+    report(vd, "CARD TIME", (uint64_t)decklink_now);
+    report(vd, "VLC TIME", (uint64_t)now);
 
     if ((now - decklink_now) > 400000) {
         /* XXX: workaround card clock drift */
@@ -1045,11 +1095,20 @@ static void PlayAudio(audio_output_t *aout, block_t *audio)
     uint32_t written;
     HRESULT result = decklink_sys->p_output->ScheduleAudioSamples(
             audio->p_buffer, sampleFrameCount, audio->i_pts, CLOCK_FREQ, &written);
+    report(aout, "PLAY AUDIO BYTES", (uint64_t)audio->i_buffer);
 
-    if (result != S_OK)
+    uint32_t samples;
+    p_output->GetBufferedAudioSampleFrameCount(&samples);
+    report(aout, "AUDIO BUFFERED SAMPLES", samples);
+
+    if (result != S_OK) {
         msg_Err(aout, "Failed to schedule audio sample: 0x%X", result);
-    else if (sampleFrameCount != written)
+        report(aout, "ERROR AUDIO", (uint64_t)result);
+    }
+    else if (sampleFrameCount != written) {
         msg_Err(aout, "Written only %d samples out of %d", written, sampleFrameCount);
+        report(aout, "ERROR AUDIO SAMPLES LOST", (uint64_t)(sampleFrameCount - written));
+    }
 
     block_Release(audio);
 }
