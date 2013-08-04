@@ -38,6 +38,10 @@
 #include <stdarg.h>
 #include <assert.h>
 
+#include <string.h>
+#include <time.h>
+#include <sys/time.h>
+
 #ifdef __ANDROID__
 # include <android/log.h>
 #endif
@@ -77,7 +81,6 @@ struct intf_sys_t
     FILE *p_file;
     const char *footer;
     char *ident;
-    mtime_t start;
 };
 
 /*****************************************************************************
@@ -199,7 +202,6 @@ static int Open( vlc_object_t *p_this )
     if( p_sys == NULL )
         return VLC_ENOMEM;
 
-    p_sys->start = mdate();
     p_sys->p_file = NULL;
     vlc_log_cb cb = TextPrint;
     const char *filename = LOG_FILE_TEXT, *header = TEXT_HEADER;
@@ -401,13 +403,21 @@ static void TextPrint( void *opaque, int type, const vlc_log_t *item,
     if( IgnoreMessage( p_intf, type ) )
         return;
 
-    mtime_t now = mdate() - p_intf->p_sys->start;
-    mtime_t secs = now / CLOCK_FREQ;
-    int msecs = now % CLOCK_FREQ;
+    time_t t;
+    struct tm tm;
+    struct timeval tv;
+
+    time(&t);
+    gettimeofday(&tv, NULL);
+    localtime_r(&t, &tm);
+
+    char buf[40];
+    strftime(buf, sizeof(buf), "%F %T", &tm);
+    sprintf(&buf[strlen(buf)], ":%.6d", (int)tv.tv_usec);
 
     int canc = vlc_savecancel();
     flockfile( stream );
-    fprintf( stream, "[%6"PRId64".%.6d] %s%s: ", secs, msecs,
+    fprintf( stream, "[%s] %s%s: ", buf,
         item->psz_module, ppsz_type[type] );
     vfprintf( stream, fmt, ap );
     putc_unlocked( '\n', stream );

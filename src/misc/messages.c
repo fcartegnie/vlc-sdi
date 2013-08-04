@@ -43,6 +43,10 @@
 #include <assert.h>
 #include <unistd.h>
 
+#include <string.h>
+#include <time.h>
+#include <sys/time.h>
+
 #include <vlc_common.h>
 #include <vlc_interface.h>
 #ifdef WIN32
@@ -200,18 +204,21 @@ static void PrintColorMsg (void *d, int type, const vlc_log_t *p_item,
 
     int canc = vlc_savecancel ();
 
-    mtime_t now = mdate();
-    static mtime_t start;
-    if (!start)
-        start = now;
+    time_t t;
+    struct tm tm;
+    struct timeval tv;
 
-    now -= start;
-    mtime_t secs = now / CLOCK_FREQ;
-    int msecs = now % CLOCK_FREQ;
+    time(&t);
+    gettimeofday(&tv, NULL);
+    localtime_r(&t, &tm);
+
+    char buf[40];
+    strftime(buf, sizeof(buf), "%F %T", &tm);
+    sprintf(&buf[strlen(buf)], ":%.6d", (int)tv.tv_usec);
 
     flockfile (stream);
-    fprintf (stream, "[%6"PRId64".%.6d] ["GREEN"%p"GRAY"] ",
-        secs, msecs, (void *)p_item->i_object_id);
+    fprintf (stream, "[%s] ["GREEN"%p"GRAY"] ",
+        buf, (void *)p_item->i_object_id);
     if (p_item->psz_header != NULL)
         utf8_fprintf (stream, "[%s] ", p_item->psz_header);
     utf8_fprintf (stream, "%s %s%s: %s", p_item->psz_module,
@@ -236,18 +243,21 @@ static void PrintMsg (void *d, int type, const vlc_log_t *p_item,
 
     int canc = vlc_savecancel ();
 
-    mtime_t now = mdate();
-    static mtime_t start;
-    if (!start)
-        start = now;
+    time_t t;
+    struct tm tm;
+    struct timeval tv;
 
-    now -= start;
-    mtime_t secs = now / CLOCK_FREQ;
-    int msecs = now % CLOCK_FREQ;
+    time(&t);
+    gettimeofday(&tv, NULL);
+    localtime_r(&t, &tm);
+
+    char buf[40];
+    strftime(buf, sizeof(buf), "%F %T", &tm);
+    sprintf(&buf[strlen(buf)], ":%.6d", (int)tv.tv_usec);
 
     flockfile (stream);
-    fprintf (stream, "[%6"PRId64".%.6d] [%p] ",
-        secs, msecs, (void *)p_item->i_object_id);
+    fprintf (stream, "[%s] [%p] ",
+        buf, (void *)p_item->i_object_id);
     if (p_item->psz_header != NULL)
         utf8_fprintf (stream, "[%s] ", p_item->psz_header);
     utf8_fprintf (stream, "%s %s%s: ", p_item->psz_module,
