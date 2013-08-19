@@ -72,6 +72,9 @@ static const int pi_channels_maps[CHANNELS_MAX+1] =
     "After this delay we black out the video."\
     )
 
+#define CCLINE_INDEX_TEXT N_("Closed Captions line.")
+#define CCLINE_INDEX_LONGTEXT N_("VBI line on which to output Closed Captions.")
+
 #define NOSIGNAL_IMAGE_TEXT N_("Picture to display on input signal loss.")
 #define NOSIGNAL_IMAGE_LONGTEXT NOSIGNAL_IMAGE_TEXT
 
@@ -199,6 +202,8 @@ vlc_module_begin()
                 VIDEO_TENBITS_TEXT, VIDEO_TENBITS_LONGTEXT, true)
     add_integer(VIDEO_CFG_PREFIX "nosignal-delay", 5,
                 NOSIGNAL_INDEX_TEXT, NOSIGNAL_INDEX_LONGTEXT, true)
+    add_integer(VIDEO_CFG_PREFIX "cc-line", 15,
+                CCLINE_INDEX_TEXT, CCLINE_INDEX_LONGTEXT, true)
     add_loadfile(VIDEO_CFG_PREFIX "nosignal-image", NULL,
                 NOSIGNAL_IMAGE_TEXT, NOSIGNAL_IMAGE_LONGTEXT, true)
 
@@ -778,7 +783,7 @@ static void send_CC(vout_display_t *vd, cc_data_t *cc, uint8_t *buf)
     for (size_t i = len; i < s; i++)
         cdp[i] = 0x040;
 
-    /* convert to v210 and write into VBI line 15 of VANC */
+    /* convert to v210 and write into VBI line of VANC */
     for (size_t w = 0; w < s / 6 ; w++) {
         put_le32(&buf, cdp[w*6+0] << 10);
         put_le32(&buf, cdp[w*6+1] | (cdp[w*6+2] << 20));
@@ -859,24 +864,22 @@ static void DisplayVideo(vout_display_t *vd, picture_t *picture, subpicture_t *)
             goto end;
         }
 
-        //for (int line = 1; line < 21; line++) {
-        { int line = 15;
-            void *buf;
-            result = vanc->GetBufferForVerticalBlankingLine(line, &buf);
-            if (result != S_OK) {
-                msg_Err(vd, "Failed to get VBI line %d: %d", line, result);
-                goto end;
-                //break;
-            }
+        int line = var_InheritInteger(vd, VIDEO_CFG_PREFIX "cc-line");
+        void *buf;
+        result = vanc->GetBufferForVerticalBlankingLine(line, &buf);
+        if (result != S_OK) {
+            msg_Err(vd, "Failed to get VBI line %d: %d", line, result);
+            goto end;
+            //break;
+        }
 
-            send_CC(vd, &picture->cc, (uint8_t*)buf);
+        send_CC(vd, &picture->cc, (uint8_t*)buf);
 
-            if (0 && picture->cc.i_data) {
-                printf("cc_count %d: ", picture->cc.i_data / 3);
-                for (int i = 0; i < picture->cc.i_data; i++)
-                    printf("%.2x ", picture->cc.p_data[i]);
-                printf("\n");
-            }
+        if (0 && picture->cc.i_data) {
+            printf("cc_count %d: ", picture->cc.i_data / 3);
+            for (int i = 0; i < picture->cc.i_data; i++)
+                printf("%.2x ", picture->cc.p_data[i]);
+            printf("\n");
         }
 
         v210_convert(frame_bytes, picture, stride);
