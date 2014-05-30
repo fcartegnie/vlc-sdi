@@ -457,6 +457,16 @@ static struct decklink_sys_t *OpenDecklink(vout_display_t *vd)
     result = decklink_sys->p_output->GetDisplayModeIterator(&p_display_iterator);
     CHECK("Could not enumerate display modes");
 
+
+    unsigned int num, den;
+    vlc_ureduce(&num, &den, fmt->i_frame_rate, fmt->i_frame_rate_base, 0);
+    unsigned fmt_width, fmt_height;
+    fmt_width = fmt->i_width;
+    fmt_height = fmt->i_height;
+    if (fmt_height == 480)
+	fmt_height = 486; /* Decklink outputs 486 NTSC */
+    msg_Info(vd, "Looking for %dx%d (%d/%d fps)", fmt_width, fmt_height, num, den);
+
     for (; ; p_display_mode->Release())
     {
         unsigned w, h;
@@ -482,7 +492,7 @@ static struct decklink_sys_t *OpenDecklink(vout_display_t *vd)
         msg_Dbg(vd, "scale %d dur %d", (int)decklink_sys->timescale,
             (int)decklink_sys->frameduration);
 
-        if (w == fmt->i_width && h == fmt->i_height) {
+        if (w == fmt_width && h == fmt_height) {
             unsigned int num_deck, den_deck;
             unsigned int num_stream, den_stream;
             vlc_ureduce(&num_deck, &den_deck,
