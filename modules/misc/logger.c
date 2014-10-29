@@ -32,15 +32,17 @@
 #include <vlc_common.h>
 #include <vlc_plugin.h>
 #include <vlc_interface.h>
+#include <vlc_threads.h>
 #include <vlc_fs.h>
 #include <vlc_charset.h>
 
 #include <stdarg.h>
 #include <assert.h>
-
 #include <string.h>
 #include <time.h>
 #include <sys/time.h>
+#include <errno.h>
+#include <signal.h>
 
 #ifdef __ANDROID__
 # include <android/log.h>
@@ -81,6 +83,9 @@ struct intf_sys_t
     FILE *p_file;
     const char *footer;
     char *ident;
+    char *filename;
+    vlc_thread_t thread;
+    vlc_mutex_t lock;
 };
 
 /*****************************************************************************
@@ -186,6 +191,36 @@ vlc_module_begin ()
     set_callbacks( Open, Close )
 vlc_module_end ()
 
+static void *Run(void *data)
+{
+    intf_thread_t *p_intf = (intf_thread_t *)data;
+    intf_sys_t *p_sys = p_intf->p_sys;
+    sigset_t set;
+    sigemptyset(&set);
+    sigaddset(&set, SIGHUP);
+    int sig;
+    for (;;) {
+        if (sigwait(&set, &sig) != 0) {
+            if (errno != EINTR)
+                msg_Err(p_intf, "sigwait failed: %m");
+            continue;
+        }
+
+        if (sig == SIGHUP) {
+            vlc_mutex_lock(&p_sys->lock);
+            fclose( p_sys->p_file );
+            p_sys->p_file = vlc_fopen( p_sys->filename, "at" );
+            if( p_sys->p_file == NULL )
+            {
+                msg_Err( p_intf, "error opening logfile `%s': %m", p_sys->filename);
+            }
+            vlc_mutex_unlock(&p_sys->lock);
+        } else
+            msg_Err(p_intf, "Unexpected signal %d", sig);
+    }
+    return NULL;
+}
+
 /*****************************************************************************
  * Open: initialize and create stuff
  *****************************************************************************/
@@ -202,6 +237,7 @@ static int Open( vlc_object_t *p_this )
     if( p_sys == NULL )
         return VLC_ENOMEM;
 
+    p_sys->filename = NULL;
     p_sys->p_file = NULL;
     vlc_log_cb cb = TextPrint;
     const char *filename = LOG_FILE_TEXT, *header = TEXT_HEADER;
@@ -305,18 +341,26 @@ static int Open( vlc_object_t *p_this )
         /* Open the log file and remove any buffering for the stream */
         msg_Dbg( p_intf, "opening logfile `%s'", filename );
         p_sys->p_file = vlc_fopen( filename, "at" );
-        free( psz_file );
         if( p_sys->p_file == NULL )
         {
             msg_Err( p_intf, "error opening logfile `%s': %m", filename );
             free( p_sys );
             return VLC_EGENERIC;
         }
+        p_sys->filename = strdup(filename);
+        free( psz_file );
         setvbuf( p_sys->p_file, NULL, _IONBF, 0 );
         fputs( header, p_sys->p_file );
     }
 
+    if (cb == HtmlPrint || cb == TextPrint) {
+        vlc_mutex_init(&p_sys->lock);
+        if (vlc_clone(&p_sys->thread, Run, p_intf, VLC_THREAD_PRIORITY_LOW))
+            abort(); /* TODO */
+    }
+
     vlc_LogSet( p_intf->p_libvlc, cb, p_intf );
+
     return VLC_SUCCESS;
 }
 
@@ -330,6 +374,13 @@ static void Close( vlc_object_t *p_this )
 
     /* Flush the queue and unsubscribe from the message queue */
     vlc_LogSet( p_intf->p_libvlc, NULL, NULL );
+
+    if (p_sys->filename) {
+        vlc_cancel(p_sys->thread);
+        vlc_join(p_sys->thread, NULL);
+        vlc_mutex_destroy(&p_sys->lock);
+        free(p_sys->filename);
+    }
 
     /* Close the log file */
 #ifdef HAVE_SYSLOG_H
@@ -398,7 +449,6 @@ static void TextPrint( void *opaque, int type, const vlc_log_t *item,
                        const char *fmt, va_list ap )
 {
     intf_thread_t *p_intf = opaque;
-    FILE *stream = p_intf->p_sys->p_file;
 
     if( IgnoreMessage( p_intf, type ) )
         return;
@@ -415,6 +465,9 @@ static void TextPrint( void *opaque, int type, const vlc_log_t *item,
     strftime(buf, sizeof(buf), "%F %T", &tm);
     sprintf(&buf[strlen(buf)], ":%.6d", (int)tv.tv_usec);
 
+    vlc_mutex_lock(&p_intf->p_sys->lock);
+    FILE *stream = p_intf->p_sys->p_file;
+
     int canc = vlc_savecancel();
     flockfile( stream );
     fprintf( stream, "[%s] %s%s: ", buf,
@@ -422,6 +475,7 @@ static void TextPrint( void *opaque, int type, const vlc_log_t *item,
     vfprintf( stream, fmt, ap );
     putc_unlocked( '\n', stream );
     funlockfile( stream );
+    vlc_mutex_unlock(&p_intf->p_sys->lock);
     vlc_restorecancel( canc );
 }
 
@@ -459,11 +513,12 @@ static void HtmlPrint( void *opaque, int type, const vlc_log_t *item,
     };
 
     intf_thread_t *p_intf = opaque;
-    FILE *stream = p_intf->p_sys->p_file;
 
     if( IgnoreMessage( p_intf, type ) )
         return;
 
+    vlc_mutex_lock(&p_intf->p_sys->lock);
+    FILE *stream = p_intf->p_sys->p_file;
     int canc = vlc_savecancel();
     flockfile( stream );
     fprintf( stream, "%s%s: <span style=\"color: #%06x\">",
@@ -472,5 +527,6 @@ static void HtmlPrint( void *opaque, int type, const vlc_log_t *item,
     vfprintf( stream, fmt, ap );
     fputs( "</span>\n", stream );
     funlockfile( stream );
+    vlc_mutex_unlock(&p_intf->p_sys->lock);
     vlc_restorecancel( canc );
 }

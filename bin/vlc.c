@@ -258,7 +258,6 @@ int main( int i_argc, const char *ppsz_argv[] )
     pthread_sigmask (SIG_SETMASK, &set, NULL);
 
     /* Do not dequeue SIGHUP if it is ignored (nohup) */
-    if (signal_ignored (SIGHUP))
         sigdelset (&set, SIGHUP);
     /* Ignore SIGPIPE */
     sigdelset (&set, SIGPIPE);
