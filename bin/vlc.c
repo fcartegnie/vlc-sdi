@@ -80,7 +80,7 @@ static char *FromSystem(const void *str)
 #endif
 
 extern void vlc_enable_override (void);
-
+#if 0
 static bool signal_ignored (int signum)
 {
     struct sigaction sa;
@@ -90,7 +90,7 @@ static bool signal_ignored (int signum)
     return ((sa.sa_flags & SA_SIGINFO)
             ? (void *)sa.sa_sigaction : (void *)sa.sa_handler) == SIG_IGN;
 }
-
+#endif
 static void vlc_kill (void *data)
 {
 #ifndef __OS2__
@@ -252,9 +252,8 @@ int main( int i_argc, const char *ppsz_argv[] )
     sigdelset (&set, SIGCHLD);
     pthread_sigmask (SIG_SETMASK, &set, NULL);
 
-    /* Do not dequeue SIGHUP if it is ignored (nohup) */
-    if (signal_ignored (SIGHUP))
-        sigdelset (&set, SIGHUP);
+    /* dequeue SIGHUP */
+    sigdelset (&set, SIGHUP);
     /* Ignore SIGPIPE */
     sigdelset (&set, SIGPIPE);
 

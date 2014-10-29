@@ -29,11 +29,13 @@
 #include <vlc_common.h>
 #include <vlc_plugin.h>
 #include <vlc_fs.h>
+#include <vlc_threads.h>
 //#include <vlc_charset.h>
 
 #include <stdarg.h>
 #include <assert.h>
 #include <errno.h>
+#include <signal.h>
 
 static const char msg_type[4][9] = { "", " error", " warning", " debug" };
 
@@ -43,6 +45,10 @@ typedef struct
     const char *footer;
     int verbosity;
     mtime_t i_start;
+    char *filename;
+    vlc_thread_t thread;
+    vlc_mutex_t lock;
+    vlc_object_t *p_obj;
 } vlc_logger_sys_t;
 
 #define TEXT_FILENAME "vlc-log.txt"
@@ -50,10 +56,40 @@ typedef struct
                     "-- logger module started --\n"
 #define TEXT_FOOTER "-- logger module stopped --\n"
 
+static void *Run(void *data)
+{
+    vlc_logger_sys_t *p_sys = (vlc_logger_sys_t *)data;
+    sigset_t set;
+    sigemptyset(&set);
+    sigaddset(&set, SIGHUP);
+    int sig;
+    for (;;) {
+        if (sigwait(&set, &sig) != 0) {
+            if (errno != EINTR)
+                msg_Err(p_sys->p_obj, "sigwait failed: %m");
+            continue;
+        }
+
+        if (sig == SIGHUP) {
+            vlc_mutex_lock(&p_sys->lock);
+            fclose( p_sys->stream );
+            p_sys->stream = vlc_fopen( p_sys->filename, "at" );
+            if( p_sys->stream == NULL )
+            {
+                msg_Err( p_sys->p_obj, "error opening logfile `%s': %m", p_sys->filename);
+            }
+            vlc_mutex_unlock(&p_sys->lock);
+        } else
+            msg_Err(p_sys->p_obj, "Unexpected signal %d", sig);
+    }
+    return NULL;
+}
+
 static void LogText(void *opaque, int type, const vlc_log_t *meta,
                     const char *format, va_list ap)
 {
     vlc_logger_sys_t *sys = opaque;
+
     FILE *stream = sys->stream;
 
     if (sys->verbosity < type)
@@ -61,12 +97,16 @@ static void LogText(void *opaque, int type, const vlc_log_t *meta,
 
     mtime_t now = mdate() - sys->i_start;
 
+    vlc_mutex_lock(&sys->lock);
+    int canc = vlc_savecancel();
     flockfile(stream);
     fprintf(stream, "[%6"PRId64".%.6"PRId64"] ", now / CLOCK_FREQ, now % CLOCK_FREQ);
     fprintf(stream, "%s%s: ", meta->psz_module, msg_type[type]);
     vfprintf(stream, format, ap);
     putc_unlocked('\n', stream);
     funlockfile(stream);
+    vlc_mutex_unlock(&sys->lock);
+    vlc_restorecancel( canc );
 }
 
 #define HTML_FILENAME "vlc-log.html"
@@ -102,6 +142,8 @@ static void LogHtml(void *opaque, int type, const vlc_log_t *meta,
 
     mtime_t now = mdate() - sys->i_start;
 
+    vlc_mutex_lock(&sys->lock);
+    int canc = vlc_savecancel();
     flockfile(stream);
     fprintf(stream, "[%6"PRId64".%.6"PRId64"] ", now / CLOCK_FREQ, now % CLOCK_FREQ);
     fprintf(stream, "%s%s: <span style=\"color: #%06x\">",
@@ -110,6 +152,8 @@ static void LogHtml(void *opaque, int type, const vlc_log_t *meta,
     vfprintf(stream, format, ap);
     fputs("</span>\n", stream);
     funlockfile(stream);
+    vlc_mutex_unlock(&sys->lock);
+    vlc_restorecancel( canc );
 }
 
 static vlc_log_cb Open(vlc_object_t *obj, void **restrict sysp)
@@ -133,9 +177,11 @@ static vlc_log_cb Open(vlc_object_t *obj, void **restrict sysp)
     const char *header = TEXT_HEADER;
 
     vlc_log_cb cb = LogText;
+    sys->filename = NULL;
     sys->footer = TEXT_FOOTER;
     sys->verbosity = verbosity;
     sys->i_start = mdate();
+    sys->p_obj = obj;
 
     char *mode = var_InheritString(obj, "logmode");
     if (mode != NULL)
@@ -168,23 +214,39 @@ static vlc_log_cb Open(vlc_object_t *obj, void **restrict sysp)
     if (path != NULL)
         filename = path;
 
-    /* Open the log file and remove any buffering for the stream */
-    msg_Dbg(obj, "opening logfile `%s'", filename);
-    sys->stream = vlc_fopen(filename, "at");
-    if (sys->stream == NULL)
+    sys->filename = strdup(filename);
+    free(path);
+    if(!sys->filename)
     {
-        msg_Err(obj, "error opening log file `%s': %s", filename,
-                vlc_strerror_c(errno) );
-        free(path);
         free(sys);
         return NULL;
     }
-    free(path);
 
+    /* Open the log file and remove any buffering for the stream */
+    msg_Dbg(obj, "opening logfile `%s'", sys->filename);
+    sys->stream = vlc_fopen(sys->filename, "at");
+    if (sys->stream == NULL)
+    {
+        msg_Err(obj, "error opening log file `%s': %s", sys->filename,
+                vlc_strerror_c(errno) );
+        free(sys->filename);
+        free(sys);
+        return NULL;
+    }
     setvbuf(sys->stream, NULL, _IONBF, 0);
     fputs(header, sys->stream);
 
+    vlc_mutex_init(&sys->lock);
+    if (vlc_clone(&sys->thread, Run, sys, VLC_THREAD_PRIORITY_LOW))
+    {
+        fclose(sys->stream);
+        vlc_mutex_destroy(&sys->lock);
+        free(sys->filename);
+        free(sys);
+    }
+
     *sysp = sys;
+
     return cb;
 }
 
@@ -192,8 +254,14 @@ static void Close(void *opaque)
 {
     vlc_logger_sys_t *sys = opaque;
 
+    vlc_cancel(sys->thread);
+    vlc_join(sys->thread, NULL);
+    vlc_mutex_destroy(&sys->lock);
+
     fputs(sys->footer, sys->stream);
     fclose(sys->stream);
+
+    free(sys->filename);
     free(sys);
 }
 
