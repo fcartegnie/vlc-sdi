@@ -80,10 +80,11 @@ static inline void cc_Flush( cc_data_t *c )
 
 static inline void cc_AppendData( cc_data_t *c, int i_field, const uint8_t cc[2] )
 {
-    if( i_field == 0 || i_field == 1 )
+    int f = i_field & 3;
+    if( f == 0 || f == 1 )
     {
-        c->pb_present[2*i_field+0] =
-        c->pb_present[2*i_field+1] = true;
+        c->pb_present[2*f+0] =
+        c->pb_present[2*f+1] = true;
     }
 
     c->p_data[c->i_data++] = i_field;
@@ -188,11 +189,10 @@ static inline void cc_Extract( cc_data_t *c, bool b_top_field_first, const uint8
 
         for( i = 0; i < i_count_cc; i++, cc += 3 )
         {
-            int i_field = cc[0] & 0x03;
             if( c->i_data + 3 > CC_MAX_DATA_SIZE )
                 continue;
 
-            cc_AppendData( c, i_field, &cc[1] );
+            cc_AppendData( c, cc[0], &cc[1] );
         }
         c->b_reorder = true;
     }
