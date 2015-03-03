@@ -491,7 +491,7 @@ static struct decklink_sys_t *OpenDecklink(vout_display_t *vd)
             vlc_ureduce(&num_stream, &den_stream,
                 fmt->i_frame_rate, fmt->i_frame_rate_base, 0);
 
-            if (num_deck == num_stream && den_deck == den_stream) {
+            if (len == 0 && num_deck == num_stream && den_deck == den_stream) {
                 msg_Info(vd, "Matches incoming stream!");
                 wanted_mode_id = mode_id;
             }

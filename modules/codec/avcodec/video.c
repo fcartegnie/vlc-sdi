@@ -81,9 +81,8 @@ struct decoder_sys_t
     vlc_sem_t sem_mt;
 
 
-    int coded_frame;
     struct {
-        int frame;
+        mtime_t date;
         int seq;
         size_t len;
         uint8_t data[256];
@@ -809,6 +808,11 @@ static void GetH264CC(block_t *block, decoder_sys_t *p_sys)
     size_t len = block->i_buffer;
     uint8_t *buf = block->p_buffer;
     block_t *nal = NULL;
+    static const uint8_t dvb1_data_start_code[] = {
+        0xb5,
+        0x00, 0x31,
+        0x47, 0x41, 0x39, 0x34
+    };
 
     while (len > 5) {
         if (memcmp(buf, start_code, 4)) {
@@ -837,7 +841,7 @@ static void GetH264CC(block_t *block, decoder_sys_t *p_sys)
             type = nal_read_sei_header(nal);
             size_t size = nal_read_sei_header(nal);
 
-            if (type == 4 && size > 7) {
+            if (type == 4 && size > 7 && !memcmp(nal->p_buffer, dvb1_data_start_code, 7)) {
                 nal->i_buffer = size;
                 break;
             }
@@ -863,11 +867,6 @@ static void GetH264CC(block_t *block, decoder_sys_t *p_sys)
 
     /* user_data_registered_itu_t_t35 packet */
 
-    static const uint8_t dvb1_data_start_code[] = {
-        0xb5,
-        0x00, 0x31,
-        0x47, 0x41, 0x39, 0x34
-    };
     if (memcmp(nal->p_buffer, dvb1_data_start_code, 7))
         return;
 
@@ -888,7 +887,7 @@ static void GetH264CC(block_t *block, decoder_sys_t *p_sys)
     }
 
 
-    p_sys->cc[i].frame = p_sys->coded_frame ;
+    p_sys->cc[i].date = block->i_pts;
     memcpy(p_sys->cc[i].data, nal->p_buffer, nal->i_buffer);
     p_sys->cc[i].len = nal->i_buffer;
     p_sys->cc[i].seq = get_seq(p_sys->cc[i].data, p_sys->cc[i].len);
@@ -964,8 +963,6 @@ static picture_t *DecodeVideo( decoder_t *p_dec, block_t **pp_block )
             GetH264CC(p_block, p_sys);
         }
 
-        if (p_block->i_buffer)
-            p_sys->coded_frame++;
     }
 
     current_time = mdate();
@@ -1222,18 +1219,18 @@ static picture_t *DecodeVideo( decoder_t *p_dec, block_t **pp_block )
         p_pic->b_progressive = !frame->interlaced_frame;
         p_pic->b_top_field_first = frame->top_field_first;
 
-        //printf("Looking PIC %d\n", frame->coded_picture_number);
+        //printf("Looking PIC %" PRId64 "\n", i_pts);
         int i = 0;
-        for (int i = 0; i < 30; i++)
-            if (p_sys->cc[i].frame == frame->coded_picture_number) {
+        for (; i < 30; i++)
+            if (p_sys->cc[i].date == i_pts) {
                 int seq = p_sys->cc[i].seq;
                 int expected_seq = (p_sys->seq == -1) ? seq : ((p_sys->seq+1) & 3);
                 if (seq != -1 && seq != expected_seq) {
-                    printf("[%d] : expect %d got %d\n", i, expected_seq, seq);
+                    //printf("[%d] : expect %d got %d\n", i, expected_seq, seq);
                 }
                 cc_Extract(&p_pic->cc, true, p_sys->cc[i].data, p_sys->cc[i].len);
 
-                //printf("FOUND %d ", frame->coded_picture_number);
+                //printf("FOUND %" PRId64, i_pts);
                 //print(p_pic->cc.p_data, p_pic->cc.i_data);
 
                 p_sys->seq = p_sys->cc[i].seq;
