@@ -312,6 +312,7 @@ case "${OS}" in
 			esac
 		fi
 
+                add_make "EXTRA_CFLAGS := -fPIC"
 		add_make_enabled "HAVE_LINUX"
 		;;
 	*mingw*)
