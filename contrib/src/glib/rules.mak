@@ -20,6 +20,6 @@ glib: glib-$(GLIB_MINOR_VERSION).tar.xz .sum-glib
 
 .glib: glib
 	$(RECONF)
-	cd $< && $(HOSTVARS) ./configure $(HOSTCONF)
+	cd $< && $(HOSTVARS) ./configure $(HOSTCONF) --with-libiconv=gnu
 	cd $< && $(MAKE) install
 	touch $@
