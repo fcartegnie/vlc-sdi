@@ -605,6 +605,11 @@ static const char *const ppsz_clock_descriptions[] =
 #define INPUT_AUDIOTRACK_ID_LONGTEXT N_( \
     "Stream ID of the audio track to use.")
 
+#define INPUT_AUDIOTRACK_IDS_TEXT N_("Audio track IDs")
+#define INPUT_AUDIOTRACK_IDS_LONGTEXT N_( \
+    "Choose the audio tracks to select by giving a comma-separated list of " \
+    "Stream IDs (SIDs). ")
+
 #define INPUT_SUBTRACK_ID_TEXT N_("Subtitle track ID")
 #define INPUT_SUBTRACK_ID_LONGTEXT N_( \
     "Stream ID of the subtitle track to use.")
@@ -1693,6 +1698,9 @@ vlc_module_begin ()
         change_safe ()
     add_integer( "audio-track-id", -1, INPUT_AUDIOTRACK_ID_TEXT,
                  INPUT_AUDIOTRACK_ID_LONGTEXT, true )
+        change_safe ()
+    add_string( "audio-track-ids", "",
+                INPUT_AUDIOTRACK_IDS_TEXT, INPUT_AUDIOTRACK_IDS_LONGTEXT, true )
         change_safe ()
     add_integer( "sub-track-id", -1,
                  INPUT_SUBTRACK_ID_TEXT, INPUT_SUBTRACK_ID_LONGTEXT, true )

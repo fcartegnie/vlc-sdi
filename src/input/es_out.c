@@ -112,6 +112,7 @@ typedef struct
 
     /* Parameters used for es selection */
     int         i_id;       /* es id as set by es fmt.id */
+    char        *psz_ids;   /* multiple comma separated es id as set by es fmt.id */
     int         i_demux_id; /* same as previous, demuxer set default value */
     int         i_channel;  /* es number in creation order */
     char        **ppsz_language;
@@ -249,6 +250,7 @@ static void EsOutPropsCleanup( es_out_es_props_t *p_props )
             free( p_props->ppsz_language[i] );
         free( p_props->ppsz_language );
     }
+    free( p_props->psz_ids );
 }
 
 static void EsOutPropsInit( es_out_es_props_t *p_props,
@@ -259,7 +261,7 @@ static void EsOutPropsInit( es_out_es_props_t *p_props,
                             const char *psz_langvar,
                             const char *psz_debug )
 {
-    p_props->e_policy = e_default_policy;
+    p_props->e_policy = (p_props->psz_ids) ? ES_OUT_ES_POLICY_SIMULTANEOUS : e_default_policy;
     p_props->i_count = 0;
     p_props->i_id = (psz_trackidvar) ? var_GetInteger( p_input, psz_trackidvar ): -1;
     p_props->i_channel = (psz_trackvar) ? var_GetInteger( p_input, psz_trackvar ): -1;
@@ -1809,7 +1811,30 @@ static void EsOutSelect( es_out_t *out, es_out_id_t *es, bool b_force )
             return;
 
         /* user designated by ID ES have higher prio than everything */
-        if ( p_esprops->i_id >= 0 )
+        if( p_esprops->psz_ids != NULL )
+        {
+            if( strcmp(p_esprops->psz_ids, "all") == 0 )
+            {
+                wanted_es = es;
+            }
+            else
+            {
+                char *tokbuf;
+                for ( const char *psz_id = strtok_r( p_esprops->psz_ids, ",", &tokbuf );
+                      psz_id != NULL;
+                    psz_id = strtok_r( NULL, ",", &tokbuf ) )
+                {
+                    if( atoi( psz_id ) == es->i_id )
+                    {
+                        wanted_es = es;
+                        break;
+                    }
+                }
+            }
+            if(!wanted_es)
+                return;
+        }
+        else if ( p_esprops->i_id >= 0 )
         {
             if( es->i_id == p_esprops->i_id )
                 wanted_es = es;
