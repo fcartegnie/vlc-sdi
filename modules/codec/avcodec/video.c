@@ -19,7 +19,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public License
  * along with this program; if not, write to the Free Software Foundation,
- * Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
+ * Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1MAX_CC_FRAMES1, USA.
  *****************************************************************************/
 
 /*****************************************************************************
@@ -86,7 +86,8 @@ struct decoder_sys_t
         int seq;
         size_t len;
         uint8_t data[256];
-    } cc[30];
+#define MAX_CC_FRAMES 128
+    } cc[MAX_CC_FRAMES];
 
     int seq;
 };
@@ -874,11 +875,11 @@ static void GetH264CC(block_t *block, decoder_sys_t *p_sys)
     nal->i_buffer -= 3;
 
     int i;
-    for (i = 0; i < 30; i++) {
+    for (i = 0; i < MAX_CC_FRAMES; i++) {
         if (p_sys->cc[i].len == 0)
             break;
     }
-    if (i == 30) {
+    if (i == MAX_CC_FRAMES) {
         //abort();
 
         // flush
@@ -1221,7 +1222,7 @@ static picture_t *DecodeVideo( decoder_t *p_dec, block_t **pp_block )
 
         //printf("Looking PIC %" PRId64 "\n", i_pts);
         int i = 0;
-        for (; i < 30; i++)
+        for (; i < MAX_CC_FRAMES; i++)
             if (p_sys->cc[i].date == i_pts) {
                 int seq = p_sys->cc[i].seq;
                 int expected_seq = (p_sys->seq == -1) ? seq : ((p_sys->seq+1) & 3);
@@ -1237,7 +1238,7 @@ static picture_t *DecodeVideo( decoder_t *p_dec, block_t **pp_block )
                 p_sys->cc[i].len = 0;
                 break;
             }
-        if (i == 30) {
+        if (i == MAX_CC_FRAMES) {
             //printf("CC NOT FOUND\n");
         }
 
