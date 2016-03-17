@@ -54,6 +54,127 @@
 #include <DeckLinkAPI.h>
 #include <DeckLinkAPIDispatch.cpp>
 
+#define MAX_AUDIO_SOURCES 8
+
+/* Number of audio samples we hold in a queue, per stereo pair.
+ * Queue them, then process all queues when there is sufficient
+ * data from all audio upstream decoders.
+ */
+#define MIN_FIFO_SIZE (8 * 1536 * 2 * 2)
+
+static void initAudioSources();
+static void destroyAudioSources();
+
+#include <libavutil/avutil.h>
+#include <libavutil/mem.h>
+#include <libavutil/common.h>
+#include <libavutil/fifo.h>
+
+AVFifoBuffer *av_fifo_alloc(unsigned int size)
+{
+    AVFifoBuffer *f= (AVFifoBuffer *)malloc(sizeof(AVFifoBuffer));
+    if(!f)
+        return NULL;
+    f->buffer = (uint8_t *)malloc(size);
+    f->end = f->buffer + size;
+    av_fifo_reset(f);
+    if (!f->buffer)
+        free(f);
+    return f;
+}
+
+void av_fifo_free(AVFifoBuffer *f)
+{
+    if(f){
+        free(f->buffer);
+        free(f);
+    }
+}
+
+void av_fifo_reset(AVFifoBuffer *f)
+{
+    f->wptr = f->rptr = f->buffer;
+    f->wndx = f->rndx = 0;
+}
+
+int av_fifo_size(AVFifoBuffer *f)
+{
+    return (uint32_t)(f->wndx - f->rndx);
+}
+
+int av_fifo_space(AVFifoBuffer *f)
+{
+    return f->end - f->buffer - av_fifo_size(f);
+}
+
+int av_fifo_realloc2(AVFifoBuffer *f, unsigned int new_size) {
+    unsigned int old_size= f->end - f->buffer;
+
+    if(old_size < new_size){
+        int len= av_fifo_size(f);
+        AVFifoBuffer *f2= av_fifo_alloc(new_size);
+
+        if (!f2)
+            return -1;
+        av_fifo_generic_read(f, f2->buffer, len, NULL);
+        f2->wptr += len;
+        f2->wndx += len;
+        free(f->buffer);
+        *f= *f2;
+        free(f2);
+    }
+    return 0;
+}
+
+// src must NOT be const as it can be a context for func that may need updating (like a pointer or byte counter)
+int av_fifo_generic_write(AVFifoBuffer *f, void *src, int size, int (*func)(void*, void*, int))
+{
+    int total = size;
+    do {
+        int len = FFMIN(f->end - f->wptr, size);
+        if(func) {
+            if(func(src, f->wptr, len) <= 0)
+                break;
+        } else {
+            memcpy(f->wptr, src, len);
+            src = (uint8_t*)src + len;
+        }
+// Write memory barrier needed for SMP here in theory
+        f->wptr += len;
+        if (f->wptr >= f->end)
+            f->wptr = f->buffer;
+        f->wndx += len;
+        size -= len;
+    } while (size > 0);
+    return total - size;
+}
+
+__inline__ int av_fifo_generic_read(AVFifoBuffer *f, void *dest, int buf_size, void (*func)(void*, void*, int))
+{
+// Read memory barrier needed for SMP here in theory
+    do {
+        int len = FFMIN(f->end - f->rptr, buf_size);
+        if(func) func(dest, f->rptr, len);
+        else{
+            memcpy(dest, f->rptr, len);
+            dest = (uint8_t*)dest + len;
+        }
+// memory barrier needed for SMP here in theory
+        av_fifo_drain(f, len);
+        buf_size -= len;
+    } while (buf_size > 0);
+    return 0;
+}
+
+/** Discard data from the FIFO. */
+__inline__ void av_fifo_drain(AVFifoBuffer *f, int size)
+{
+    f->rptr += size;
+    if (f->rptr >= f->end)
+        f->rptr -= f->end - f->buffer;
+    f->rndx += size;
+}
+
 #define FRAME_SIZE 1920
 #define CHANNELS_MAX 6
 
@@ -285,6 +406,7 @@ static struct decklink_sys_t *GetDLSys(vlc_object_t *obj)
         }
     }
 
+    initAudioSources();
     vlc_mutex_unlock(&sys_lock);
     return sys;
 }
@@ -311,6 +433,8 @@ static void ReleaseDLSys(vlc_object_t *obj)
 
         if (sys->fd > 0)
             net_Close(sys->fd);
+
+        destroyAudioSources();
 
         free(sys);
         var_Destroy(libvlc, "decklink-sys");
@@ -556,7 +680,7 @@ static struct decklink_sys_t *OpenDecklink(vout_display_t *vd)
         result = decklink_sys->p_output->EnableAudioOutput(
             decklink_sys->i_rate,
             bmdAudioSampleType16bitInteger,
-            /*decklink_sys->i_channels*/ 2,
+            MAX_AUDIO_SOURCES * 2,
             bmdAudioOutputStreamTimestamped);
     }
     CHECK("Could not start audio output");
@@ -1136,6 +1260,133 @@ static void CloseVideo(vlc_object_t *p_this)
  * Audio
  *****************************************************************************/
 
+static struct audio_source_s
+{
+	int		nr;		/* 1..MAX_AUDIO_SOURCES */
+	audio_output_t *aout;
+	AVFifoBuffer   *fifo;		/* PCM data for a given audio pair */
+	int             fifo_ready;	/* Flag: Whether the fifo contains 'enough' data to process */
+} audioSources[MAX_AUDIO_SOURCES];
+
+static vlc_mutex_t g_audio_source_lock = VLC_STATIC_MUTEX;
+static int g_audio_source_init = 1;
+static int g_audio_source_count = 0;
+/* Buffer than contains all audio for all channels, and is sent to the h/w */
+static unsigned char *g_audio_buffer = 0;
+
+static void initAudioSources()
+{
+	if (g_audio_source_init) {
+		g_audio_source_init = 0;
+		g_audio_source_count = 0;
+		g_audio_buffer = (unsigned char *)calloc(1, MIN_FIFO_SIZE * MAX_AUDIO_SOURCES);
+		vlc_mutex_init(&g_audio_source_lock);
+		memset(audioSources, 0, sizeof(audioSources));
+	}
+}
+
+static void destroyAudioSources()
+{
+	for (int i = 0; i < MAX_AUDIO_SOURCES; i++) {
+		struct audio_source_s *s = &audioSources[i];
+		if (s->nr == 0)
+			continue;
+
+		s->nr = 0;
+		av_fifo_free(s->fifo);
+	}
+	if (g_audio_buffer)
+		free(g_audio_buffer);
+}
+
+static void destroyAudioSource(audio_output_t *aout)
+{
+	vlc_mutex_lock(&g_audio_source_lock);
+	for (int i = 0; i < MAX_AUDIO_SOURCES; i++) {
+		struct audio_source_s *s = &audioSources[i];
+		if (s->aout == aout) {
+			s->nr = 0;
+			s->aout = 0;
+			av_fifo_free(s->fifo);
+			break;
+		}
+	}
+	vlc_mutex_unlock(&g_audio_source_lock);
+}
+static int createAudioSource(audio_output_t *aout)
+{
+	int ret = -1;
+
+	vlc_mutex_lock(&g_audio_source_lock);
+	for (int i = 0; i < MAX_AUDIO_SOURCES; i++) {
+		struct audio_source_s *s = &audioSources[i];
+		if (s->nr == 0) {
+			s->nr = ++g_audio_source_count;
+			s->aout = aout;
+			s->fifo = av_fifo_alloc(128 * (1536 * 2 * 2));
+			//printf("Created Audio Source[%d] nr = %d aout=%p\n", i, s->nr, s->aout);
+			ret = 0;
+			break;
+		}
+	}
+	vlc_mutex_unlock(&g_audio_source_lock);
+
+	return ret;
+}
+
+static struct audio_source_s *findAudioSource(audio_output_t *aout)
+{
+	struct audio_source_s *ret = 0;
+
+	vlc_mutex_lock(&g_audio_source_lock);
+	for (int i = 0; i < MAX_AUDIO_SOURCES; i++) {
+		if (audioSources[i].aout == aout) {
+			ret = &audioSources[i];
+			break;
+		}
+	}
+	vlc_mutex_unlock(&g_audio_source_lock);
+
+	return ret;
+}
+
+/* Must call with the mutex held */
+static int updateLevelAudioSource(struct audio_source_s *s)
+{
+	if (av_fifo_size(s->fifo) >= MIN_FIFO_SIZE)
+		s->fifo_ready = 1;
+	else
+		s->fifo_ready = 0;
+
+	return s->fifo_ready;
+}
+
+/* call with the mutex held */
+static int sourcesReadyToRender()
+{
+	int active_sources = 0, ready_sources = 0;
+
+	vlc_mutex_lock(&g_audio_source_lock);
+	for (int i = 0; i < MAX_AUDIO_SOURCES; i++) {
+		if (audioSources[i].nr > 0) {
+			active_sources++;
+			if (updateLevelAudioSource(&audioSources[i]))
+				ready_sources++;
+		}
+	}
+	vlc_mutex_unlock(&g_audio_source_lock);
+
+	return active_sources == ready_sources;
+}
+
+static void writeAudioSource(struct audio_source_s *s, unsigned char *buf, unsigned int byteCount)
+{
+	vlc_mutex_lock(&g_audio_source_lock);
+	av_fifo_generic_write(s->fifo, buf, byteCount, NULL);
+	updateLevelAudioSource(s);
+	vlc_mutex_unlock(&g_audio_source_lock);
+};
+
 static void Flush (audio_output_t *aout, bool drain)
 {
     struct decklink_sys_t *decklink_sys = GetDLSys(VLC_OBJECT(aout));
@@ -1161,6 +1412,10 @@ static int TimeGet(audio_output_t *, mtime_t* restrict)
 
 static int Start(audio_output_t *aout, audio_sample_format_t *restrict fmt)
 {
+    struct audio_source_s *s = findAudioSource(aout);
+    if (!s)
+        return VLC_EGENERIC;
+
     struct decklink_sys_t *decklink_sys = GetDLSys(VLC_OBJECT(aout));
 
     if (decklink_sys->i_rate == 0)
@@ -1177,8 +1432,56 @@ static int Start(audio_output_t *aout, audio_sample_format_t *restrict fmt)
     return VLC_SUCCESS;
 }
 
+#if 0
+static void audioPairCopy(unsigned char *buf, int to, int from, int num_samples)
+{
+	/* to/from 0..MAX_AUDIO_SOURCES */
+	unsigned char *f = buf + (from * 4);
+	unsigned char *t = buf + (to * 4);
+	for (int i = 0; i < num_samples;i++) {
+		*(t + 0) = *(f + 0);
+		*(t + 1) = *(f + 1);
+		*(t + 2) = *(f + 2);
+		*(t + 3) = *(f + 3);
+
+		f += (MAX_AUDIO_SOURCES * 4);
+		t += (MAX_AUDIO_SOURCES * 4);
+	}
+}
+#endif
+
+/* Don't call this unless all the fifos are ready */
+static void audioFramer(unsigned char *out, int num_samples)
+{
+	struct audio_source_s *s[MAX_AUDIO_SOURCES] = { 0 };
+
+	memset(out, 0, num_samples * 2 * 2 * MAX_AUDIO_SOURCES);
+
+	vlc_mutex_lock(&g_audio_source_lock);
+	for (int i = 0; i < MAX_AUDIO_SOURCES; i++) {
+		if (audioSources[i].nr == 0)
+			continue;
+
+		s[i] = &audioSources[i];
+	}
+
+	unsigned char *o = out;
+	for (int c = 0; c < num_samples; c++) {
+		for (int j = 0; j < MAX_AUDIO_SOURCES; j++) {
+			if (s[j])
+				av_fifo_generic_read(s[j]->fifo, o, 4, NULL);
+			o += 4;
+		}
+	}
+	vlc_mutex_unlock(&g_audio_source_lock);
+}
+
 static void PlayAudio(audio_output_t *aout, block_t *audio)
 {
+    struct audio_source_s *s = findAudioSource(aout);
+    if (!s)
+        return;
+
     struct decklink_sys_t *decklink_sys = GetDLSys(VLC_OBJECT(aout));
     vlc_mutex_lock(&decklink_sys->lock);
     IDeckLinkOutput *p_output = decklink_sys->p_output;
@@ -1192,8 +1495,34 @@ static void PlayAudio(audio_output_t *aout, block_t *audio)
 
     uint32_t sampleFrameCount = audio->i_buffer / (2 * 2 /*decklink_sys->i_channels*/);
     uint32_t written;
-    HRESULT result = decklink_sys->p_output->ScheduleAudioSamples(
-            audio->p_buffer, sampleFrameCount, audio->i_pts, CLOCK_FREQ, &written);
+
+    /* Push the current audio pair payload into its fifo */
+    writeAudioSource(s, audio->p_buffer, audio->i_buffer);
+
+    /* We slave the entire output from a single pts, we'll use the pts from the
+     * first audio pair. If we're not currently the first audio pair, we're done.
+     */
+    if (s->nr != 1) {
+        return;
+    }
+
+    /* Enumerate all the source fifos, check if they have enough data for us to output
+     * a buffer containing all audio for all pairs.
+     */
+    if (sourcesReadyToRender() == 0)
+        return;
+
+    /* Walk the source fifos, prepare a combined buffer for delivery. */
+    audioFramer(g_audio_buffer, sampleFrameCount);
+
+#if 0
+    /* For fun: Clone pair 1 to pair 3 */
+    audioPairCopy(g_audio_buffer, 3, 1, sampleFrameCount);
+    /* For fun: Clone pair 0 to pair 7 */
+    audioPairCopy(g_audio_buffer, 7, 0, sampleFrameCount);
+#endif
+
+    HRESULT result = decklink_sys->p_output->ScheduleAudioSamples(g_audio_buffer, sampleFrameCount, audio->i_pts, CLOCK_FREQ, &written);
     report(aout, "PLAY AUDIO BYTES", (uint64_t)audio->i_buffer);
 
     uint32_t samples;
@@ -1216,6 +1545,8 @@ static int OpenAudio(vlc_object_t *p_this)
 {
     audio_output_t *aout = (audio_output_t *)p_this;
     struct decklink_sys_t *decklink_sys = GetDLSys(VLC_OBJECT(aout));
+
+    createAudioSource((audio_output_t *)p_this);
 
     vlc_mutex_lock(&decklink_sys->lock);
     decklink_sys->aconn = getAConn(aout);
@@ -1240,6 +1571,8 @@ static int OpenAudio(vlc_object_t *p_this)
 
 static void CloseAudio(vlc_object_t *p_this)
 {
+    destroyAudioSource((audio_output_t *)p_this);
+
     struct decklink_sys_t *decklink_sys = GetDLSys(p_this);
     vlc_mutex_lock(&decklink_sys->lock);
     decklink_sys->aconn = 0;
