@@ -1712,7 +1712,7 @@ static void EsUnselect( es_out_t *out, es_out_id_t *es, bool b_update )
 static void EsOutSelect( es_out_t *out, es_out_id_t *es, bool b_force )
 {
     es_out_sys_t      *p_sys = out->p_sys;
-
+    bool b_multiple_audio = false;
     int i_cat = es->fmt.i_cat;
 
     if( !p_sys->b_active ||
@@ -1791,6 +1791,26 @@ static void EsOutSelect( es_out_t *out, es_out_id_t *es, bool b_force )
                 else
                     return;
             }
+
+            char *audio_tracks = var_GetNonEmptyString( p_sys->p_input, "audio-track-ids" );
+            if( audio_tracks != NULL )
+            {
+                char *buf;
+                b_multiple_audio = true;
+
+                for ( const char *audio_track = strtok_r( audio_tracks, ",", &buf );
+                      audio_track != NULL;
+                      audio_track = strtok_r( NULL, ",", &buf ) )
+                {
+                    if( atoi( audio_track ) == es->i_id )
+                    {
+                        if( !EsIsSelected( es ) )
+                            EsSelect( out, es );
+                        break;
+                    }
+                }
+                free( audio_tracks );
+            }
         }
         else if( i_cat == SPU_ES )
         {
@@ -1841,7 +1861,7 @@ static void EsOutSelect( es_out_t *out, es_out_id_t *es, bool b_force )
             i_wanted  = es->i_channel;
         }
 
-        if( i_wanted == es->i_channel && !EsIsSelected( es ) )
+        if( i_wanted == es->i_channel && !EsIsSelected( es ) && !b_multiple_audio )
             EsSelect( out, es );
     }
 
@@ -1853,7 +1873,8 @@ static void EsOutSelect( es_out_t *out, es_out_id_t *es, bool b_force )
             if( p_sys->i_mode == ES_OUT_MODE_AUTO &&
                 p_sys->p_es_audio &&
                 p_sys->p_es_audio != es &&
-                EsIsSelected( p_sys->p_es_audio ) )
+                EsIsSelected( p_sys->p_es_audio ) &&
+                !b_multiple_audio )
             {
                 EsUnselect( out, p_sys->p_es_audio, false );
             }

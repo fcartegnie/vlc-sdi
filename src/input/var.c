@@ -432,6 +432,7 @@ void input_ConfigVarInit ( input_thread_t *p_input )
 
         var_Create( p_input, "audio-track-id",
                     VLC_VAR_INTEGER|VLC_VAR_DOINHERIT );
+        var_Create( p_input, "audio-track-ids", VLC_VAR_STRING|VLC_VAR_DOINHERIT );
         var_Create( p_input, "sub-track-id",
                     VLC_VAR_INTEGER|VLC_VAR_DOINHERIT );
 
