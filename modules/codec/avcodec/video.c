@@ -526,6 +526,101 @@ static void print(uint8_t *buf, int len)
         printf("\n");
 }
 
+static unsigned char *findNextStartCode(unsigned char *buf, int len)
+{
+    static const uint8_t mpeg_start_code[] = {
+        0x00, 0x00, 0x01,
+    };
+
+    for (int i = 0; i < len - 4; i++) {
+        if (memcmp(buf + i, mpeg_start_code, sizeof(mpeg_start_code)) == 0)
+		return buf + i;
+    }
+    return 0;
+}
+
+#if 0
+static hexdump(unsigned char *buf, int len, char *title)
+{
+    printf("%s: ", title);
+    for (int i = 0; i < len; i++)
+        printf("%02x ", *(buf + i));
+    printf("\n");
+}
+#endif
+
+static void GetMPEG2CC(block_t *block, decoder_sys_t *p_sys)
+{
+    size_t len = block->i_buffer;
+    size_t rem = len;
+    size_t off = 0;
+    int cplen;
+    int sectionlen;
+    int sections = 0;
+    uint8_t *buf = block->p_buffer;
+    static const uint8_t eia608_start_code[] = {
+        0x00, 0x00, 0x01, 0xb2, 0x47, 0x41
+    };
+    static const uint8_t user_data_start_code[] = {
+        0x00, 0x00, 0x01, 0xb2
+    };
+
+    if (len == 0)
+	return;
+
+    //hexdump(buf, 16, "header");
+
+    while (off < len) {
+        unsigned char *s = findNextStartCode(buf + off, len - off);
+	if (!s)
+		break;
+
+        if (memcmp(s, user_data_start_code, sizeof(user_data_start_code))) {
+            off = (s - buf) + 1;
+            continue;
+        }
+
+        if (memcmp(s, eia608_start_code, sizeof(eia608_start_code))) {
+            off = (s - buf) + 1;
+            continue;
+        }
+
+        unsigned char *end = findNextStartCode(s + 1, (buf + len) - s + 1);
+	if (!end) {
+		/* user_data section is the last section in the buffer */
+		/* Skip the section header and start copying from the start of the three
+		 * byte sequences */
+		sectionlen = ((buf + len) - s) + 2;
+	} else {
+		/* User_data section is followed by atleast another section in the buffer. */
+		sectionlen = (end - s) + 2;
+	}
+	cplen = sectionlen - 4;
+#if 0
+	printf("section = %d bytes\n", sectionlen);
+	printf("eia608 payload = %d bytes (%d sequences)\n", cplen, cplen / 3);
+	hexdump(s, sectionlen, "cplen");
+	hexdump(s + 4, cplen, "eia608 data");
+#endif
+
+        int j;
+        for (j = 0; j < MAX_CC_FRAMES; j++) {
+            if (p_sys->cc[j].len == 0)
+                break;
+        }
+        if (j == MAX_CC_FRAMES) {
+            j = 0;
+            memset(&p_sys->cc, 0, sizeof(p_sys->cc));
+        }
+
+        memcpy(p_sys->cc[j].data, s + 4, cplen);
+        p_sys->cc[j].len = cplen;
+        p_sys->cc[j].date = block->i_pts;
+        p_sys->cc[j].seq = get_seq(p_sys->cc[j].data, p_sys->cc[j].len);
+
+        off += cplen;
+    }
+}
 
 static void GetH264CC(block_t *block, decoder_sys_t *p_sys)
 {
@@ -639,6 +734,9 @@ picture_t *DecodeVideo( decoder_t *p_dec, block_t **pp_block )
     //printf("CODEC %4.4s %d bytes\n", (char*)&p_dec->fmt_in.i_codec, (*pp_block)->i_buffer);
     if (p_dec->fmt_in.i_codec == VLC_CODEC_H264) {
         GetH264CC(*pp_block, p_sys);
+    } else
+    if (p_dec->fmt_in.i_codec == VLC_CODEC_MPGV) {
+        GetMPEG2CC(*pp_block, p_sys);
     }
 
     if( !p_context->extradata_size && p_dec->fmt_in.i_extra )
