@@ -1,5 +1,5 @@
 /*****************************************************************************
- * logger.c : file logging plugin for vlc
+ * logger.c : logging plugin for vlc
  *****************************************************************************
  * Copyright (C) 2002-2008 the VideoLAN team
  * $Id$
