@@ -1,8 +1,7 @@
 /*****************************************************************************
  * logger.c : logging plugin for vlc
  *****************************************************************************
- * Copyright (C) 2002-2008 the VideoLAN team
- * $Id$
+ * Copyright (C) 2002-2015 VideoLAN Authors
  *
  * Authors: Samuel Hocevar <sam@zoy.org>
  *
