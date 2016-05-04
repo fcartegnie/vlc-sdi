@@ -1804,15 +1804,23 @@ static void EsOutSelect( es_out_t *out, es_out_id_t *es, bool b_force )
                 char *buf;
                 b_multiple_audio = true;
 
-                for ( const char *audio_track = strtok_r( audio_tracks, ",", &buf );
-                      audio_track != NULL;
-                      audio_track = strtok_r( NULL, ",", &buf ) )
+                if (strcmp(audio_tracks, "all") == 0)
                 {
-                    if( atoi( audio_track ) == es->i_id )
+                    if( !EsIsSelected( es ) )
+                        EsSelect( out, es );
+                }
+                else
+                {
+                    for ( const char *audio_track = strtok_r( audio_tracks, ",", &buf );
+                          audio_track != NULL;
+                          audio_track = strtok_r( NULL, ",", &buf ) )
                     {
-                        if( !EsIsSelected( es ) )
-                            EsSelect( out, es );
-                        break;
+                        if( atoi( audio_track ) == es->i_id )
+                        {
+                            if( !EsIsSelected( es ) )
+                                EsSelect( out, es );
+                            break;
+                        }
                     }
                 }
                 free( audio_tracks );
