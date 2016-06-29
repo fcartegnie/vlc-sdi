@@ -654,6 +654,7 @@ static void report(vlc_object_t *obj, const char *str, uint64_t val)
         return;
 
     net_Write(obj, fd, buf, strlen(buf));
+    free(buf);
 }
 #define report(obj, str, val) report(VLC_OBJECT(obj), str, val)
 
