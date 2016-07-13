@@ -288,6 +288,7 @@ struct decklink_sys_t
 
     //int i_channels;
     int i_rate;
+    int64_t i_max_audio_channels;
 
     int i_width;
     int i_height;
@@ -508,6 +509,7 @@ static struct decklink_sys_t *OpenDecklink(vout_display_t *vd)
     IDeckLinkDisplayMode *p_display_mode = NULL;
     IDeckLinkDisplayModeIterator *p_display_iterator = NULL;
     IDeckLinkConfiguration *p_config = NULL;
+    IDeckLinkAttributes *p_attrs = NULL;
     IDeckLink *p_card = NULL;
 
     struct decklink_sys_t *decklink_sys = GetDLSys(VLC_OBJECT(vd));
@@ -570,6 +572,10 @@ static struct decklink_sys_t *OpenDecklink(vout_display_t *vd)
     result = p_card->QueryInterface(IID_IDeckLinkConfiguration,
         (void**)&p_config);
     CHECK("Could not get config interface");
+
+    result = p_card->QueryInterface(IID_IDeckLinkAttributes,
+        (void**)&p_attrs);
+    CHECK("Could not get attributes interface");
 
     if (vconn)
     {
@@ -671,6 +677,13 @@ static struct decklink_sys_t *OpenDecklink(vout_display_t *vd)
         goto error;
     }
 
+    result = p_attrs->GetInt(BMDDeckLinkMaximumAudioChannels,
+                             &decklink_sys->i_max_audio_channels);
+
+    CHECK("Could not read maximum supported audio channels");
+    msg_Dbg(vd, "Maximum audio channels supported: %ld",
+            decklink_sys->i_max_audio_channels);
+
     result = p_config->SetInt(
         bmdDeckLinkConfigAudioInputConnection, decklink_sys->aconn);
     CHECK("Could not set audio connection");
@@ -691,6 +704,7 @@ static struct decklink_sys_t *OpenDecklink(vout_display_t *vd)
     CHECK("Could not start playback");
 
     p_config->Release();
+    p_attrs->Release();
     p_display_mode->Release();
     p_display_iterator->Release();
     p_card->Release();
@@ -709,6 +723,8 @@ error:
         p_card->Release();
     if (p_config)
         p_config->Release();
+    if (p_attrs)
+        p_attrs->Release();
     if (p_display_iterator)
         p_display_iterator->Release();
     if (decklink_iterator)
