@@ -59,8 +59,10 @@
 /* Number of audio samples we hold in a queue, per stereo pair.
  * Queue them, then process all queues when there is sufficient
  * data from all audio upstream decoders.
+ * 48000 samples per second * 16-bits per channel * 2 channels / 30 FPS
+ * (i.e. 6400)
  */
-#define MIN_FIFO_SIZE (8 * 1536 * 2 * 2)
+#define MIN_FIFO_SIZE (48000 * 2 * 2 / 30)
 
 static void initAudioSources();
 static void destroyAudioSources();
