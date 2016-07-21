@@ -230,6 +230,10 @@ static const int pi_channels_maps[CHANNELS_MAX+1] =
     "Number of output channels for DeckLink output. " \
     "Must be 2, 8 or 16. 0 disables audio output.")
 
+#define AUDIO_CHANNEL_MAP_TEXT N_("Remap audio channels")
+#define AUDIO_CHANNEL_MAP_LONGTEXT N_(\
+    "Channel mapping list for remapped channels.  Ex: G1P2:G2P1")
+
 #define VIDEO_CONNECTION_TEXT N_("Video connection")
 #define VIDEO_CONNECTION_LONGTEXT N_(\
     "Video connection for DeckLink output.")
@@ -278,6 +282,7 @@ struct decklink_sys_t
     //int i_channels;
     int i_rate;
     int64_t i_max_audio_channels;
+    int remap_table[MAX_AUDIO_SOURCES];
 
     int i_width;
     int i_height;
@@ -349,6 +354,9 @@ vlc_module_begin()
                 RATE_TEXT, RATE_LONGTEXT, true)
     add_integer(AUDIO_CFG_PREFIX "audio-channels", 2,
                 CHANNELS_TEXT, CHANNELS_LONGTEXT, true)
+    add_string(AUDIO_CFG_PREFIX "channel-map", "",
+                AUDIO_CHANNEL_MAP_TEXT, AUDIO_CHANNEL_MAP_LONGTEXT, true)
+
 vlc_module_end ()
 
 /* Protects decklink_sys_t creation/deletion */
@@ -1450,8 +1458,23 @@ static void audioPairCopy(unsigned char *buf, int to, int from, int num_samples)
 }
 #endif
 
+static int groupPairStringToSlot(const char *grouppair)
+{
+  unsigned int group;
+  unsigned int pair;
+  if (sscanf(grouppair, "G%uP%u", &group, &pair) == 2) {
+    if (group == 0 || group > 8)
+      return -1;
+    if (pair == 0 || pair > 2)
+      return -1;
+    return (group - 1) * 2 + (pair - 1);
+  } else {
+    return -1;
+  }
+}
+
 /* Don't call this unless all the fifos are ready */
-static void audioFramer(unsigned char *out, int num_samples)
+static void audioFramer(struct decklink_sys_t *decklink_sys, unsigned char *out, int num_samples)
 {
 	struct audio_source_s *s[MAX_AUDIO_SOURCES] = { 0 };
 
@@ -1462,7 +1485,8 @@ static void audioFramer(unsigned char *out, int num_samples)
 		if (audioSources[i].nr == 0)
 			continue;
 
-		s[i] = &audioSources[i];
+        if (decklink_sys->remap_table[i] != -1)
+            s[decklink_sys->remap_table[i]] = &audioSources[i];
 	}
 
 	unsigned char *o = out;
@@ -1513,7 +1537,7 @@ static void PlayAudio(audio_output_t *aout, block_t *audio)
         return;
 
     /* Walk the source fifos, prepare a combined buffer for delivery. */
-    audioFramer(g_audio_buffer, sampleFrameCount);
+    audioFramer(decklink_sys, g_audio_buffer, sampleFrameCount);
 
 #if 0
     /* For fun: Clone pair 1 to pair 3 */
@@ -1554,6 +1578,41 @@ static int OpenAudio(vlc_object_t *p_this)
     decklink_sys->users++;
     vlc_cond_signal(&decklink_sys->cond);
     vlc_mutex_unlock(&decklink_sys->lock);
+
+    /* Initialize remap table for passthrough */
+	for (int i = 0; i < MAX_AUDIO_SOURCES; i++) {
+        decklink_sys->remap_table[i] = i;
+	}
+
+	char *remap_string = var_InheritString(p_this, AUDIO_CFG_PREFIX "channel-map");
+	//    char *remap_string = "G2P2:G1P2:G8P1";
+    if (remap_string) {
+        /* If the user specifies a remap table, all non-specified channels
+           should be discarded */
+        for (int i = 0; i < MAX_AUDIO_SOURCES; i++) {
+            decklink_sys->remap_table[i] = -1;
+        }
+
+        /* Loop through the string and extract channels */
+        char s_remap_chan[MAX_AUDIO_SOURCES][5];
+        memset(&s_remap_chan, 0, sizeof(s_remap_chan));
+        sscanf(remap_string, "%4c:%4c:%4c:%4c:%4c:%4c:%4c:%4c",
+               s_remap_chan[0], s_remap_chan[1], s_remap_chan[2],
+               s_remap_chan[3], s_remap_chan[4], s_remap_chan[5],
+               s_remap_chan[6], s_remap_chan[7]);
+
+        for (int i = 0; i < MAX_AUDIO_SOURCES; i++) {
+            int remap_dest = groupPairStringToSlot(s_remap_chan[i]);
+
+            /* FIXME: convert to using decklink_sys->i_max_audio_channels */
+            if (remap_dest >= MAX_AUDIO_SOURCES) {
+                fprintf(stderr, "Channel %s not supported by this card\n",
+                        s_remap_chan[i]);
+                continue;
+            }
+            decklink_sys->remap_table[i] = remap_dest;
+        }
+    }
 
     aout->play      = PlayAudio;
     aout->start     = Start;
