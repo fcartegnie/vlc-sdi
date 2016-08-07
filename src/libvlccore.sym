@@ -20,6 +20,7 @@ aout_DeviceSet
 aout_DevicesList
 block_Alloc
 block_FifoCount
+block_FifoSize
 block_FifoEmpty
 block_FifoGet
 block_FifoNew
