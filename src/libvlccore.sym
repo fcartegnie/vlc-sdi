@@ -30,6 +30,7 @@ aout_FiltersPlay
 aout_FiltersAdjustResampling
 block_Alloc
 block_FifoCount
+block_FifoSize
 block_FifoEmpty
 block_FifoGet
 block_FifoNew

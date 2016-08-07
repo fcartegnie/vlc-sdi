@@ -348,7 +348,7 @@ block_t *block_FifoShow( block_fifo_t *p_fifo )
 }
 
 /* FIXME: not (really) thread-safe */
-size_t block_FifoSize (block_fifo_t *fifo)
+size_t block_FifoSize (const block_fifo_t *fifo)
 {
     size_t size;
 
@@ -359,7 +359,7 @@ size_t block_FifoSize (block_fifo_t *fifo)
 }
 
 /* FIXME: not (really) thread-safe */
-size_t block_FifoCount (block_fifo_t *fifo)
+size_t block_FifoCount (const block_fifo_t *fifo)
 {
     size_t depth;
 
