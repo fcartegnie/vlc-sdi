@@ -1269,7 +1269,6 @@ static int sourcesReadyToRender()
 	for (int i = 0; i < MAX_AUDIO_SOURCES; i++) {
 		if (audioSources[i].nr > 0) {
 			active_sources++;
-			printf("djh fifo=%d filled=%zu\n", audioSources[i].nr, block_FifoSize(audioSources[i].fifo));
 			if (block_FifoSize(audioSources[i].fifo) >= MIN_FIFO_SIZE)
 				ready_sources++;
 		}
@@ -1368,7 +1367,6 @@ static block_t *audioFramer(struct decklink_sys_t *decklink_sys, block_t *firstc
    interleaveAudio(firstchan_block->p_buffer, final_block->p_buffer,
 		   firstchan_block->i_nb_samples,
 		   decklink_sys->remap_table[firstchan_num]);
-   printf("dequeueing chan=%d pt pts=%ld\n", firstchan_num, firstchan_block->i_pts);
 
    /* Handle all the other channels */
    for (int i = 0; i < MAX_AUDIO_SOURCES; i++) {
@@ -1376,14 +1374,13 @@ static block_t *audioFramer(struct decklink_sys_t *decklink_sys, block_t *firstc
 	  continue;
       block_t *blk = block_FifoShow(audioSources[i].fifo);
       long int delta = firstchan_block->i_pts - blk->i_pts;
-      printf("checking chan=%d pt pts=%ld delta=%ld\n", i, blk->i_pts, firstchan_block->i_pts - blk->i_pts);
+
       if (delta < -30000) {
 	/* Because the earliest block in this queue is much later than the
 	   PTS of the first channel, we're going to be putting out audio
 	   silence on this channel until we get to that block.  So let's
 	   keep the block on the queue until the first channel catches up
 	   to that point... */
-	printf("Leaving it on the queue until first channel gets here...\n");
 	continue;
       }
 
@@ -1397,7 +1394,6 @@ static block_t *audioFramer(struct decklink_sys_t *decklink_sys, block_t *firstc
 	  break;
 	}
 
-	printf("Discarding the sample that is too old pts=%ld\n", blk->i_pts);
 	blk = block_FifoGet(audioSources[i].fifo);
 	block_Release(blk);
       }
@@ -1408,7 +1404,6 @@ static block_t *audioFramer(struct decklink_sys_t *decklink_sys, block_t *firstc
 	continue;
 
       blk = block_FifoGet(audioSources[i].fifo);
-      printf("dequeueing chan=%d pt pts=%ld delta=%ld\n", i, blk->i_pts, firstchan_block->i_pts - blk->i_pts);
       interleaveAudio(blk->p_buffer, final_block->p_buffer,
 		      firstchan_block->i_nb_samples,
 		      decklink_sys->remap_table[i]);
@@ -1436,7 +1431,6 @@ static void PlayAudio(audio_output_t *aout, block_t *audio)
     }
 
     audio->i_pts -= decklink_sys->offset;
-    printf("loading fifo: i=%d pts=%ld\n", s->nr, audio->i_pts);
 
     /* Push the current audio pair payload into its fifo */
     block_FifoPut(s->fifo, audio);
