@@ -108,6 +108,7 @@ case "${host_os}" in
     ;;
   linux*)
     SYS=linux
+    CXXFLAGS="-std=c++11"
     ;;
   bsdi*)
     SYS=bsdi
