@@ -43,6 +43,10 @@ sout_LTLIBRARIES = \
 	libstream_out_setid_plugin.la \
 	libstream_out_transcode_plugin.la
 
+libstream_out_decklink_plugin_la_SOURCES = stream_out/decklink/decklink.cpp \
+        stream_out/decklink/decklink.hpp
+sout_LTLIBRARIES += libstream_out_decklink_plugin.la
+
 # RTP plugin
 sout_LTLIBRARIES += libstream_out_rtp_plugin.la
 libstream_out_rtp_plugin_la_SOURCES = \

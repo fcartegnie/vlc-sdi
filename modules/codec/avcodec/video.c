@@ -838,6 +838,7 @@ static picture_t *DecodeVideo( decoder_t *p_dec, block_t **pp_block )
         }
 
         int ret = avcodec_send_packet(p_context, &pkt);
+
         if( ret != 0 && ret != AVERROR(EAGAIN) )
         {
             if (ret == AVERROR(ENOMEM) || ret == AVERROR(EINVAL))
