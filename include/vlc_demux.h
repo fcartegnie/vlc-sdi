@@ -524,4 +524,30 @@ static inline int vlc_demux_chained_Control(vlc_demux_chained_t *dc, int query,
  * @}
  */
 
+typedef struct vlc_subdemux_t vlc_subdemux_t;
+typedef struct vlc_subdemux_sys_t vlc_subdemux_sys_t;
+
+struct vlc_subdemux_t
+{
+    VLC_COMMON_MEMBERS
+
+    /* Module properties */
+    module_t    *p_module;
+
+    /* es output */
+    es_out_t    *out;
+
+    /* set by demuxer */
+    int (*pf_subdemux)  ( vlc_subdemux_t * );
+
+    vlc_subdemux_sys_t *p_sys;
+};
+
+
+VLC_API vlc_subdemux_t *vlc_subdemux_New(vlc_object_t *parent,
+                                         const char *name,
+                                         es_out_t *out);
+VLC_API void vlc_subdemux_Send(vlc_subdemux_t *, block_t *block);
+VLC_API void vlc_subdemux_Delete(vlc_subdemux_t *);
+
 #endif

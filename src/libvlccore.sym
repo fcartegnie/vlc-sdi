@@ -101,6 +101,9 @@ vlc_demux_chained_New
 vlc_demux_chained_Send
 vlc_demux_chained_ControlVa
 vlc_demux_chained_Delete
+vlc_subdemux_New
+vlc_subdemux_Send
+vlc_subdemux_Delete
 EndMD5
 es_format_Clean
 es_format_Copy

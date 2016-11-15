@@ -806,3 +806,24 @@ demux_t *demux_FilterChainNew( demux_t *p_demux, const char *psz_chain )
 
     return NULL;
 }
+
+vlc_subdemux_t *vlc_subdemux_New(vlc_object_t *parent,
+                                         const char *name,
+                                         es_out_t *out)
+{
+    VLC_UNUSED(parent);
+    VLC_UNUSED(name);
+    VLC_UNUSED(out);
+    return NULL;
+}
+
+void vlc_subdemux_Send(vlc_subdemux_t *p_subdemux, block_t *p_block)
+{
+    VLC_UNUSED(p_subdemux);
+    VLC_UNUSED(p_block);
+}
+
+void vlc_subdemux_Delete(vlc_subdemux_t *p_subdemux)
+{
+    VLC_UNUSED(p_subdemux);
+}
