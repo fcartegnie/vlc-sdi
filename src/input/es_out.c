@@ -2896,6 +2896,9 @@ static void EsOutUpdateInfo( es_out_t *out, es_out_id_t *es, const es_format_t *
     case SPU_ES:
         psz_type = _("Subtitle");
         break;
+    case DATA_ES:
+        psz_type = _("Data");
+        break;
     default:
         psz_type = NULL;
         break;

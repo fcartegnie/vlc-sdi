@@ -561,6 +561,7 @@ enum es_format_category_e
     UNKNOWN_ES = 0x00,
     VIDEO_ES,
     AUDIO_ES,
+    DATA_ES,
     SPU_ES,
     NAV_ES,
 };

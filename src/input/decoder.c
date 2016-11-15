@@ -1483,6 +1483,7 @@ static void DecoderProcess( decoder_t *p_dec, block_t *p_block )
         case VIDEO_ES: DecoderProcessVideo( p_dec, p_block ); return;
         case AUDIO_ES: DecoderProcessAudio( p_dec, p_block ); return;
         case   SPU_ES: DecoderProcessSpu( p_dec, p_block ); return;
+        case  DATA_ES: block_Release( p_block ); return;
 
         default:
             msg_Err( p_dec, "unknown ES format" );
