@@ -35,6 +35,17 @@ void HxxxParse_AnnexB_SEI(const uint8_t *p_buf, size_t i_buf,
         HxxxParseSEI(p_buf, i_buf, i_header, cb, cbdata);
 }
 
+static inline int16_t read_ga94_bar(uint8_t i_flag, const uint8_t **pp_buf)
+{
+    if( i_flag )
+    {
+        int16_t val = ((*pp_buf)[0] & 0x3F << 8) & (*pp_buf)[1];
+        *pp_buf += 2;
+        return val;
+    }
+    return -1;
+}
+
 void HxxxParseSEI(const uint8_t *p_buf, size_t i_buf,
                   uint8_t i_header, pf_hxxx_sei_callback pf_callback, void *cbdata)
 {
@@ -115,6 +126,20 @@ void HxxxParseSEI(const uint8_t *p_buf, size_t i_buf,
                                     sei_data.itu_t35.u.cc.i_data = i_t35 - 8;
                                     sei_data.itu_t35.u.cc.p_data = &p_t35[8];
                                     b_continue = pf_callback( &sei_data, cbdata );
+                                }
+                                else if( p_t35[7] == 0x06 && i_t35 >= 10 )
+                                {
+                                    uint8_t i_flags = p_t35[8] >> 4;
+                                    const uint8_t *p_buf = &p_t35[9];
+                                    if( popcount(i_flags) * 2 == i_t35 - 10 )
+                                    {
+                                        sei_data.itu_t35.type = HXXX_ITU_T35_TYPE_BAR;
+                                        sei_data.itu_t35.u.bar.top = read_ga94_bar( i_flags & 0x08, &p_buf );
+                                        sei_data.itu_t35.u.bar.bottom = read_ga94_bar( i_flags & 0x04, &p_buf );
+                                        sei_data.itu_t35.u.bar.left = read_ga94_bar( i_flags & 0x02, &p_buf );
+                                        sei_data.itu_t35.u.bar.right = read_ga94_bar( i_flags & 0x01, &p_buf );
+                                        b_continue = pf_callback( &sei_data, cbdata );
+                                    }
                                 }
                                 break;
                             case VLC_FOURCC('D', 'T', 'G', '1'):
