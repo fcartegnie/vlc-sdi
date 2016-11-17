@@ -133,6 +133,7 @@ typedef struct {
     bool has_pictures_invalid;              /* Will VOUT_DISPLAY_EVENT_PICTURES_INVALID be used */
     bool has_event_thread;                  /* Will events (key at least) be emitted using an independent thread */
     const vlc_fourcc_t *subpicture_chromas; /* List of supported chromas for subpicture rendering. */
+    int  supported_ancillaries_mask;
 } vout_display_info_t;
 
 /**
