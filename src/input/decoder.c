@@ -130,6 +130,15 @@ struct decoder_owner
     atomic_bool drained;
     bool b_idle;
 
+    /* Ancillary */
+    struct
+    {
+        int decoder_provided_mask;
+        int packetizer_provided_mask;
+        int vout_requested_mask;
+        vlc_ancillary_t *p_anc;
+    } ancillaries;
+
     /* CC */
 #define MAX_CC_DECODERS 64 /* The es_out only creates one type of es */
     struct
@@ -169,6 +178,7 @@ static int LoadDecoder( decoder_t *p_dec, bool b_packetizer,
 
     p_dec->pf_decode = NULL;
     p_dec->pf_get_cc = NULL;
+    p_dec->pf_get_anc = NULL;
     p_dec->pf_packetize = NULL;
     p_dec->pf_flush = NULL;
 
@@ -538,6 +548,10 @@ static int vout_update_format( decoder_t *p_dec )
             msg_Err( p_dec, "failed to create video output" );
             return -1;
         }
+
+        vlc_mutex_lock( &p_owner->lock );
+        p_owner->ancillaries.vout_requested_mask = vout_GetSupportedAncillaries( p_vout );
+        vlc_mutex_unlock( &p_owner->lock );
     }
 
     if ( memcmp( &p_dec->fmt_out.video.mastering,
@@ -953,6 +967,22 @@ static void DecoderQueueCc( decoder_t *p_videodec, block_t *p_cc,
     }
 }
 
+static void DecoderGetVanc( decoder_t *p_dec, int anc_mask )
+{
+    struct decoder_owner *p_owner = dec_get_owner( p_dec );
+
+    assert( p_dec->pf_get_anc != NULL );
+
+    vlc_ancillary_t *p_anc = p_dec->pf_get_anc( p_dec, &anc_mask );
+    if( !p_anc )
+        return;
+
+    vlc_mutex_lock( &p_owner->lock );
+    vlc_ancillary_StorageEmpty( &p_owner->ancillaries.p_anc );
+    p_owner->ancillaries.p_anc = p_anc;
+    vlc_mutex_unlock( &p_owner->lock );
+}
+
 static void DecoderPlayVideo( decoder_t *p_dec, picture_t *p_picture,
                              unsigned *restrict pi_lost_sum )
 {
@@ -979,6 +1009,10 @@ static void DecoderPlayVideo( decoder_t *p_dec, picture_t *p_picture,
         if( p_vout )
             vout_Flush( p_vout, VLC_TS_OLDEST );
     }
+
+    if( p_dec->pf_get_anc &&
+       ( !p_owner->p_packetizer || !p_owner->p_packetizer->pf_get_anc ) )
+        DecoderGetVanc( p_dec, 0xFF );
 
     if( p_picture->date == VLC_TS_INVALID )
     {
@@ -1398,6 +1432,14 @@ static void DecoderProcess( decoder_t *p_dec, block_t *p_block )
             if( p_packetizer->pf_get_cc )
                 PacketizerGetCc( p_dec, p_packetizer );
 
+            if( p_packetizer->pf_get_anc && p_dec->pf_set_anc )
+            {
+                int anc_mask = 0xFF;
+                vlc_ancillary_t *p_anc = p_packetizer->pf_get_anc( p_packetizer, &anc_mask );
+                if( p_anc )
+                    p_dec->pf_set_anc( p_dec, p_anc );
+            }
+
             while( p_packetized_block )
             {
                 block_t *p_next = p_packetized_block->p_next;
@@ -1707,6 +1749,10 @@ static decoder_t * CreateDecoder( vlc_object_t *p_parent,
     p_owner->p_resource = p_resource;
     p_owner->p_aout = NULL;
     p_owner->p_vout = NULL;
+    p_owner->ancillaries.decoder_provided_mask = 0;
+    p_owner->ancillaries.packetizer_provided_mask = 0;
+    p_owner->ancillaries.vout_requested_mask = 0;
+    p_owner->ancillaries.p_anc = NULL;
     p_owner->i_spu_channel = 0;
     p_owner->i_spu_order = 0;
     p_owner->p_sout = p_sout;
@@ -1904,6 +1950,8 @@ static void DeleteDecoder( decoder_t * p_dec )
         UnloadDecoder( p_owner->p_packetizer );
         vlc_object_release( p_owner->p_packetizer );
     }
+
+    vlc_ancillary_StorageEmpty( &p_owner->ancillaries.p_anc );
 
     vlc_cond_destroy( &p_owner->wait_timed );
     vlc_cond_destroy( &p_owner->wait_fifo );
