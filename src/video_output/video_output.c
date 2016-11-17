@@ -962,6 +962,8 @@ static int ThreadDisplayRenderPicture(vout_thread_t *vout, bool is_forced)
     vout_display_t *vd = vout->p->display.vd;
 
     picture_t *torender = picture_Hold(vout->p->displayed.current);
+    vlc_ancillary_t *p_vanc = torender->p_vanc;
+    torender->p_vanc = NULL;
 
     vout_chrono_Start(&vout->p->render);
 
@@ -970,7 +972,11 @@ static int ThreadDisplayRenderPicture(vout_thread_t *vout, bool is_forced)
     vlc_mutex_unlock(&vout->p->filter.lock);
 
     if (!filtered)
+    {
+        if( p_vanc )
+            vlc_ancillary_Delete( p_vanc );
         return VLC_EGENERIC;
+    }
 
     if (filtered->date != vout->p->displayed.current->date)
         msg_Warn(vout, "Unsupported timestamp modifications done by chain_interactive");
@@ -1098,6 +1104,8 @@ static int ThreadDisplayRenderPicture(vout_thread_t *vout, bool is_forced)
             picture_Release(todisplay);
             if (subpic)
                 subpicture_Delete(subpic);
+            if( p_vanc )
+                vlc_ancillary_Delete( p_vanc );
             return VLC_EGENERIC;
         }
 
@@ -1133,10 +1141,14 @@ static int ThreadDisplayRenderPicture(vout_thread_t *vout, bool is_forced)
     }
 
     if (sys->display.use_dr) {
+        /* reattach vanc */
+        todisplay->p_vanc = p_vanc;
         vout_display_Prepare(vd, todisplay, subpic, todisplay->date);
     } else {
         if (!do_dr_spu && !do_early_spu && vout->p->spu_blend && subpic)
             picture_BlendSubpicture(todisplay, vout->p->spu_blend, subpic);
+        /* reattach vanc */
+        todisplay->p_vanc = p_vanc;
         vout_display_Prepare(vd, todisplay, do_dr_spu ? subpic : NULL,
                              todisplay->date);
 
