@@ -85,7 +85,7 @@ block_t * cc_storage_get_current( cc_storage_t *p_ccs, bool pb_present[4] )
     block_t *p_block;
 
     for( int i = 0; i < 4; i++ )
-        pb_present[i] = p_ccs->current.pb_present[i];
+        pb_present[i] = p_ccs->current.rgi_present[i] & CC_DATA_CAPTIONS;
 
     if( p_ccs->current.i_data <= 0 )
         return NULL;

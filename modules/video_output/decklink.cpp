@@ -971,7 +971,7 @@ static int OpenVideo(vlc_object_t *p_this)
         }
     }
     vd->info.has_hide_mouse = true;
-    vd->info.supported_ancillaries_mask = ANCILLARY_CLOSED_CAPTIONS;
+    vd->info.supported_ancillaries_mask = ANCILLARY_AFD | ANCILLARY_BAR;
     vd->pool    = PoolVideo;
     vd->prepare = NULL;
     vd->display = DisplayVideo;

@@ -738,7 +738,7 @@ static block_t *GetCc( decoder_t *p_dec, bool pb_present[4] )
     block_t *p_cc;
 
     for( int i = 0; i < 4; i++ )
-        pb_present[i] = p_sys->cc.pb_present[i];
+        pb_present[i] = p_sys->cc.rgi_present[i] & CC_DATA_CAPTIONS;
 
     if( p_sys->cc.i_data <= 0 )
         return NULL;

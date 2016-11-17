@@ -43,7 +43,13 @@ enum cc_payload_type_e
 typedef struct
 {
     /* Which channel are present */
-    bool pb_present[4];
+    enum
+    {
+        CC_DATA_NONE            = 0,      /* no xmit */
+        CC_DATA_OTHER           = 1 << 0, /* filling, ... */
+        CC_DATA_CAPTIONS        = 1 << 1,
+        CC_DATA_XDS             = 1 << 2,
+    } rgi_present[4];
 
     /* */
     bool b_reorder;
@@ -66,7 +72,7 @@ static inline void cc_Init( cc_data_t *c )
     int i;
 
     for( i = 0; i < 4; i++ )
-        c-> pb_present[i] = false; 
+        c-> rgi_present[i] = CC_DATA_NONE;
     c->i_data = 0;
     c->b_reorder = false;
     c->i_payload_type = CC_PAYLOAD_NONE;
@@ -87,8 +93,22 @@ static inline void cc_AppendData( cc_data_t *c, uint8_t cc_preamble, const uint8
     uint8_t i_field = cc_preamble & 0x03;
     if( i_field == 0 || i_field == 1 )
     {
-        c->pb_present[2*i_field+0] =
-        c->pb_present[2*i_field+1] = true;
+        if( cc[0] & 0x7F )
+        {
+            /* 0x60 is captions text but does not tell which channel */
+            if((cc[0] & 0x70) == 0x10) /* so check pre/post channel commands */
+            {
+                uint8_t i_channel = (cc[0] & 0x08) >> 3;
+                c->rgi_present[2*i_field+i_channel] |= CC_DATA_CAPTIONS;
+            }
+            else if((cc[0] & 0x70) == 0x00 && i_field == 1)
+            {
+                c->rgi_present[2] |= CC_DATA_XDS;
+                c->rgi_present[3] |= CC_DATA_XDS;
+            }
+        }
+        c->rgi_present[2*i_field+0] |= CC_DATA_OTHER;
+        c->rgi_present[2*i_field+1] |= CC_DATA_OTHER;
     }
 
     c->p_data[c->i_data++] = cc_preamble;

@@ -785,7 +785,7 @@ static int DemuxRecVideo( demux_t *p_demux, ty_rec_hdr_t *rec_hdr, block_t *p_bl
 
         es_format_t fmt;
 
-        if( !p_sys->cc.pb_present[i] || p_sys->p_cc[i] )
+        if( !p_sys->cc.rgi_present[i] || p_sys->p_cc[i] )
             continue;
 
         es_format_Init( &fmt, SPU_ES, fcc[i] );
