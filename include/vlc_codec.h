@@ -28,6 +28,7 @@
 #include <vlc_es.h>
 #include <vlc_picture.h>
 #include <vlc_subpicture.h>
+#include <vlc_ancillary.h>
 
 /**
  * \defgroup codec Codec
@@ -106,6 +107,7 @@ struct decoder_t
      * pb_present will be used to known which cc channel are present (but
      * globaly, not necessary for the current packet */
     block_t *           ( * pf_get_cc )      ( decoder_t *, bool pb_present[4] );
+    vlc_ancillary_t *   ( * pf_get_anc )    ( decoder_t *, int *p_type );
 
     /* Meta data at codec level
      *  The decoder owner set it back to NULL once it has retreived what it needs.
