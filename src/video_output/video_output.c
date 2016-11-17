@@ -837,8 +837,14 @@ static int ThreadDisplayPreparePicture(vout_thread_t *vout, bool reuse, bool fra
         vout->p->displayed.decoded       = picture_Hold(decoded);
         vout->p->displayed.timestamp     = decoded->date;
         vout->p->displayed.is_interlaced = !decoded->b_progressive;
-
+        /* Detach / reattach ancillary */
+        vlc_ancillary_t *p_vanc = decoded->p_vanc;
+        decoded->p_vanc = NULL;
         picture = filter_chain_VideoFilter(vout->p->filter.chain_static, decoded);
+        if(picture)
+          picture->p_vanc = p_vanc;
+        else
+          vlc_ancillary_StorageDelete( p_vanc );
     }
 
     vlc_mutex_unlock(&vout->p->filter.lock);
