@@ -52,6 +52,7 @@
 #endif
 
 #include "../codec/cc.h"
+
 #define FRAME_INFO_DEPTH 64
 
 struct frame_info_s
@@ -73,6 +74,7 @@ typedef struct
 
     /* Closed captions for decoders */
     cc_data_t cc;
+    vlc_ancillary_t *p_vanc;
 
     /* for frame skipping algo */
     bool b_hurry_up;
@@ -112,6 +114,15 @@ typedef struct
 
     vlc_sem_t sem_mt;
 } decoder_sys_t;
+
+static vlc_ancillary_t * GetVanc( decoder_t *p_dec, int *pi_mask )
+{
+    decoder_sys_t *p_sys = p_dec->p_sys;
+    VLC_UNUSED( pi_mask );
+    vlc_ancillary_t *p_anc = p_sys->p_vanc;
+    p_sys->p_vanc = NULL;
+    return p_anc;
+}
 
 static inline void wait_mt(decoder_sys_t *sys)
 {
@@ -652,6 +663,8 @@ int InitVideoDec( vlc_object_t *obj )
 
     p_dec->pf_decode = DecodeVideo;
     p_dec->pf_flush  = Flush;
+    p_dec->pf_get_anc      = GetVanc;
+    p_sys->p_vanc = NULL;
 
     /* XXX: Writing input format makes little sense. */
     if( p_context->profile != FF_PROFILE_UNKNOWN )
@@ -940,6 +953,14 @@ static int DecodeSidedata( decoder_t *p_dec, const AVFrame *frame, picture_t *p_
                 desc.i_reorder_depth = 4;
                 decoder_QueueCc( p_dec, p_cc, &desc );
             }
+
+            vlc_ancillary_t *p_anc = vlc_ancillary_New( ANCILLARY_CLOSED_CAPTIONS, p_sys->cc.i_data );
+            if( p_anc )
+            {
+                memcpy( p_anc->p_data, p_sys->cc.p_data, p_sys->cc.i_data );
+                vlc_ancillary_StorageAppend( &p_sys->p_vanc, p_anc );
+            }
+
             cc_Flush( &p_sys->cc );
         }
     }
@@ -1346,6 +1367,9 @@ void EndVideoDec( vlc_object_t *obj )
 
     if( p_sys->p_va )
         vlc_va_Delete( p_sys->p_va, &hwaccel_context );
+
+    if( p_sys->p_vanc )
+        vlc_ancillary_Delete( p_sys->p_vanc );
 
     vlc_sem_destroy( &p_sys->sem_mt );
     free( p_sys );
