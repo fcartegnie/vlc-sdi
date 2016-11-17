@@ -403,6 +403,9 @@ typedef struct session_descriptor_t session_descriptor_t;
 typedef struct decoder_t         decoder_t;
 typedef struct decoder_synchro_t decoder_synchro_t;
 
+/* Ancillary */
+typedef struct vlc_ancillary_t vlc_ancillary_t;
+
 /* Encoders */
 typedef struct encoder_t      encoder_t;
 
