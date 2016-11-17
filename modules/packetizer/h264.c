@@ -992,6 +992,18 @@ static bool ParseSeiCallback( const hxxx_sei_data_t *p_sei_data, void *cbdata )
                     vlc_ancillary_StorageAppend( &p_sys->p_vanc, p_anc );
                 }
             }
+            else if( p_sei_data->itu_t35.type == HXXX_ITU_T35_TYPE_BAR )
+            {
+                vlc_ancillary_t *p_anc = vlc_ancillary_New( ANCILLARY_BAR );
+                if( p_anc )
+                {
+                    p_anc->bar.top = p_sei_data->itu_t35.u.bar.top;
+                    p_anc->bar.bottom = p_sei_data->itu_t35.u.bar.bottom;
+                    p_anc->bar.left = p_sei_data->itu_t35.u.bar.left;
+                    p_anc->bar.right = p_sei_data->itu_t35.u.bar.right;
+                    vlc_ancillary_StorageAppend( &p_sys->p_vanc, p_anc );
+                }
+            }
         } break;
 
             /* Look for SEI recovery point */
