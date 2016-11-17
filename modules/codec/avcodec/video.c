@@ -35,6 +35,7 @@
 #include <vlc_codec.h>
 #include <vlc_avcodec.h>
 #include <vlc_cpu.h>
+#include <vlc_ancillary.h>
 #include <assert.h>
 
 #include <libavcodec/avcodec.h>
@@ -52,12 +53,14 @@
 #endif
 
 #include "../codec/cc.h"
+
 #define FRAME_INFO_DEPTH 64
 
 struct frame_info_s
 {
     bool b_eos;
     bool b_display;
+    vlc_ancillary_t *p_vanc;
 };
 
 /*****************************************************************************
@@ -366,6 +369,9 @@ static int lavc_UpdateVideoFormat(decoder_t *dec, AVCodecContext *ctx,
         dec->fmt_out.video.mastering = dec->fmt_in.video.mastering;
     dec->fmt_out.video.lighting = dec->fmt_in.video.lighting;
 
+    dec->fmt_out.video.i_afd = dec->fmt_in.video.i_afd;
+    dec->fmt_out.video.bardata = dec->fmt_in.video.bardata;
+
     return decoder_UpdateVideoFormat(dec);
 }
 
@@ -440,6 +446,8 @@ static int OpenVideoCodec( decoder_t *p_dec )
     p_sys->profile = -1;
     p_sys->level = -1;
     cc_Init( &p_sys->cc );
+    for( size_t i=0; i<FRAME_INFO_DEPTH; i++ )
+        p_sys->frame_info[i].p_vanc = NULL;
 
     set_video_color_settings( &p_dec->fmt_in.video, ctx );
 
@@ -787,7 +795,8 @@ static void update_late_frame_count( decoder_t *p_dec, block_t *p_block,
 }
 
 
-static int DecodeSidedata( decoder_t *p_dec, const AVFrame *frame, picture_t *p_pic )
+static int DecodeSidedata( decoder_t *p_dec, const AVFrame *frame, picture_t *p_pic,
+                           struct frame_info_s *p_frame_info )
 {
     decoder_sys_t *p_sys = p_dec->p_sys;
     bool format_changed = false;
@@ -917,6 +926,38 @@ static int DecodeSidedata( decoder_t *p_dec, const AVFrame *frame, picture_t *p_
         p_pic->format.multiview_mode = p_dec->fmt_out.video.multiview_mode;
 #endif
 
+    const AVFrameSideData *p_afd = av_frame_get_side_data( frame, AV_FRAME_DATA_AFD );
+    if( p_afd )
+    {
+        printf("AFD AV %d\n", p_afd->data[0]);
+        p_pic->format.i_afd = p_afd->data[0];
+    }
+    else
+    {
+        vlc_ancillary_t *p_anc = vlc_ancillary_StorageGet( &p_frame_info->p_vanc, ANCILLARY_AFD );
+        if( p_anc )
+        {
+            printf("AFD AV %d\n", p_anc->afd.val);
+            p_dec->fmt_out.video.i_afd =
+            p_pic->format.i_afd = p_anc->afd.val;
+            format_changed = true;
+            vlc_ancillary_Delete( p_anc );
+        }
+        else p_pic->format.i_afd = p_dec->fmt_out.video.i_afd;
+    }
+
+    if( p_dec->fmt_out.video.i_afd != p_pic->format.i_afd ||
+        ( p_pic->format.i_afd == 4 &&
+          (p_dec->fmt_out.video.bardata.bottom != p_pic->format.bardata.bottom ||
+           p_dec->fmt_out.video.bardata.top != p_pic->format.bardata.top ||
+           p_dec->fmt_out.video.bardata.left != p_pic->format.bardata.left ||
+           p_dec->fmt_out.video.bardata.right != p_pic->format.bardata.right) ) )
+    {
+        p_dec->fmt_out.video.i_afd = p_pic->format.i_afd;
+        p_dec->fmt_out.video.bardata = p_pic->format.bardata;
+        format_changed = true;
+    }
+
     if (format_changed && decoder_UpdateVideoFormat( p_dec ))
         return -1;
 
@@ -940,6 +981,7 @@ static int DecodeSidedata( decoder_t *p_dec, const AVFrame *frame, picture_t *p_
                 desc.i_reorder_depth = 4;
                 decoder_QueueCc( p_dec, p_cc, &desc );
             }
+
             cc_Flush( &p_sys->cc );
         }
     }
@@ -1084,6 +1126,12 @@ static int DecodeBlock( decoder_t *p_dec, block_t **pp_block )
             struct frame_info_s *p_frame_info = &p_sys->frame_info[p_context->reordered_opaque % FRAME_INFO_DEPTH];
             p_frame_info->b_eos = p_block && (p_block->i_flags & BLOCK_FLAG_END_OF_SEQUENCE);
             p_frame_info->b_display = b_need_output_picture;
+            if( p_block )
+            {
+                vlc_ancillary_StorageEmpty( &p_frame_info->p_vanc );
+                p_frame_info->p_vanc = p_block->p_anc;
+                p_block->p_anc = NULL;
+            }
 
             p_context->reordered_opaque++;
             i_used = ret != AVERROR(EAGAIN) ? pkt.size : 0;
@@ -1265,7 +1313,7 @@ static int DecodeBlock( decoder_t *p_dec, block_t **pp_block )
         p_pic->b_progressive = !frame->interlaced_frame;
         p_pic->b_top_field_first = frame->top_field_first;
 
-        if (DecodeSidedata(p_dec, frame, p_pic))
+        if (DecodeSidedata(p_dec, frame, p_pic, p_frame_info))
             i_pts = VLC_TS_INVALID;
 
         av_frame_free(&frame);
@@ -1340,6 +1388,9 @@ void EndVideoDec( vlc_object_t *obj )
     wait_mt( p_sys );
 
     cc_Flush( &p_sys->cc );
+
+    for( size_t i=0; i<FRAME_INFO_DEPTH; i++ )
+        vlc_ancillary_StorageEmpty( &p_sys->frame_info[i].p_vanc );
 
     hwaccel_context = ctx->hwaccel_context;
     avcodec_free_context( &ctx );
