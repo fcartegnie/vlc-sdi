@@ -40,6 +40,7 @@
 #include <vlc_vout_display.h>
 #include <vlc_picture_pool.h>
 
+#include <vlc_ancillary.h>
 #include <vlc_block.h>
 #include <vlc_image.h>
 #include <vlc_aout.h>
@@ -970,6 +971,7 @@ static int OpenVideo(vlc_object_t *p_this)
         }
     }
     vd->info.has_hide_mouse = true;
+    vd->info.supported_ancillaries_mask = ANCILLARY_CLOSED_CAPTIONS;
     vd->pool    = PoolVideo;
     vd->prepare = NULL;
     vd->display = DisplayVideo;
