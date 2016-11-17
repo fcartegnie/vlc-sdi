@@ -325,6 +325,7 @@ libavcodec_plugin_la_SOURCES = \
 	codec/avcodec/chroma.c codec/avcodec/chroma.h \
 	codec/avcodec/va.c codec/avcodec/va.h \
 	codec/avcodec/avcodec.c codec/avcodec/avcodec.h
+libavcodec_plugin_la_SOURCES += packetizer/hxxx_sei.c
 if ENABLE_SOUT
 libavcodec_plugin_la_SOURCES += codec/avcodec/encoder.c
 endif

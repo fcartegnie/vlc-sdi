@@ -43,6 +43,11 @@
 #include "avcodec.h"
 #include "va.h"
 
+#include "../codec/cc.h"
+#include "../packetizer/hxxx_nal.h"
+#include "../packetizer/hxxx_sei.h"
+#include "../packetizer/h264_nal.h" /* H264_NAL_SEI */
+
 /*****************************************************************************
  * decoder_sys_t : decoder descriptor
  *****************************************************************************/
@@ -79,7 +84,54 @@ struct decoder_sys_t
     int level;
 
     vlc_sem_t sem_mt;
+
+    struct {
+        mtime_t date;
+        int seq;
+        size_t len;
+        uint8_t data[256];
+#define MAX_CC_FRAMES 128
+    } cc[MAX_CC_FRAMES];
+
+    vlc_ancillary_t *p_vanc;
+    cc_data_t lastcc;
+    mtime_t i_cc_pts;
+    mtime_t i_cc_dts;
+    int     i_cc_flags;
+
+    int seq;
 };
+
+static vlc_ancillary_t * GetVanc( decoder_t *p_dec, int *pi_mask )
+{
+    VLC_UNUSED( pi_mask );
+    vlc_ancillary_t *p_anc = p_dec->p_sys->p_vanc;
+    p_dec->p_sys->p_vanc = NULL;
+    return p_anc;
+}
+
+static block_t *GetCc( decoder_t *p_dec, bool pb_present[4] )
+{
+    decoder_sys_t *p_sys = p_dec->p_sys;
+    block_t *p_cc;
+
+    for( int i = 0; i < 4; i++ )
+        pb_present[i] = p_sys->lastcc.pb_present[i];
+
+    if( p_sys->lastcc.i_data <= 0 )
+        return NULL;
+
+    p_cc = block_Alloc( p_sys->lastcc.i_data);
+    if( p_cc )
+    {
+        memcpy( p_cc->p_buffer, p_sys->lastcc.p_data, p_sys->lastcc.i_data );
+        p_cc->i_dts =
+        p_cc->i_pts = p_sys->lastcc.b_reorder ? p_sys->i_cc_pts : p_sys->i_cc_dts;
+        p_cc->i_flags = ( p_sys->lastcc.b_reorder  ? p_sys->i_cc_flags : BLOCK_FLAG_TYPE_P ) & BLOCK_FLAG_TYPE_MASK;
+    }
+    cc_Flush( &p_sys->lastcc );
+    return p_cc;
+}
 
 #ifdef HAVE_AVCODEC_MT
 static inline void wait_mt(decoder_sys_t *sys)
@@ -520,6 +572,7 @@ int InitVideoDec( decoder_t *p_dec, AVCodecContext *p_context,
     p_sys->i_pts = VLC_TS_INVALID;
     p_sys->b_first_frame = true;
     p_sys->i_late_frames = 0;
+    p_sys->seq = -1;
 
     /* Set output properties */
     p_dec->fmt_out.i_cat = VIDEO_ES;
@@ -551,8 +604,13 @@ int InitVideoDec( decoder_t *p_dec, AVCodecContext *p_context,
         return VLC_EGENERIC;
     }
 
+    cc_Init( &p_sys->lastcc );
+    p_sys->p_vanc = NULL;
+
     p_dec->pf_decode_video = DecodeVideo;
     p_dec->pf_flush        = Flush;
+    p_dec->pf_get_cc       = GetCc;
+    p_dec->pf_get_anc      = GetVanc;
 
     return VLC_SUCCESS;
 }
@@ -703,6 +761,140 @@ static void update_late_frame_count( decoder_t *p_dec, block_t *p_block, mtime_t
 
 
 /*****************************************************************************
+ * CC Stuff:
+ *****************************************************************************/
+static int get_seq(uint8_t *buf, size_t size)
+{
+    for (size_t i = 7; i < size - 2; i += 3)
+        if (buf[i] == (0xfc | 3)) /* DTVCC packet start */
+            return (buf[i+1] >> 6) & 3;
+
+    return -1;
+}
+
+#if 0
+static void print(uint8_t *buf, int len)
+{
+    int dtv_size = 0;
+    int words = 0;
+    int e608 = 0;
+    for (int j = 0; j < len / 3; j++) {
+        int field = buf[3*j] & 3;
+        if (field <= 1) {
+            e608 = 1;
+            int c1 = buf[3*j+1] & 0x7f;
+            if (c1 < 0x20) c1 = '.';
+            int c2 = buf[3*j+2] & 0x7f;
+            if (c2 < 0x20) c2 = '.';
+            printf(" %.2x %.2x (%c %c)", buf[3*j+1], buf[3*j+2], c1, c2 );
+            continue;
+        }
+        if (field > 1) {
+            if (field == 3) {
+                dtv_size = (buf[3*j+1] & 0x3f) * 2 - 1;
+            }
+            if (dtv_size == 0)
+                continue;
+            if (field == 2) {
+                int c1 = buf[3*j+1] & 0x7f;
+                if (c1 < 0x20) c1 = '.';
+                int c2 = buf[3*j+2] & 0x7f;
+                if (c2 < 0x20) c2 = '.';
+                printf(" %.2x %.2x (%c %c)", buf[3*j+1], buf[3*j+2], c1, c2 );
+            }
+            words += 2;
+            if (words >= dtv_size)
+                break;
+        }
+    }
+    if (words || e608)
+        printf("\n");
+}
+
+static hexdump(unsigned char *buf, int len, char *title)
+{
+    printf("%s: ", title);
+    for (int i = 0; i < len; i++)
+        printf("%02x ", *(buf + i));
+    printf("\n");
+}
+#endif
+
+static inline void extract_cc(decoder_sys_t *p_sys, const uint8_t *p_buf, size_t i_buf, mtime_t i_pts)
+{
+    int j;
+    for (j = 0; j < MAX_CC_FRAMES; j++) {
+        if (p_sys->cc[j].len == 0)
+            break;
+    }
+    if (j == MAX_CC_FRAMES) {
+        j = 0;
+        memset(&p_sys->cc, 0, sizeof(p_sys->cc));
+    }
+    memcpy(p_sys->cc[j].data, p_buf, i_buf);
+    p_sys->cc[j].len = i_buf;
+    p_sys->cc[j].date = i_pts;
+    p_sys->cc[j].seq = get_seq(p_sys->cc[j].data, p_sys->cc[j].len);
+}
+
+struct sei_callback_data_s
+{
+    decoder_sys_t *p_sys;
+    mtime_t i_pts;
+};
+
+static bool extract_cc_sei_callback(const hxxx_sei_data_t *p_seidata, void *cbdata)
+{
+    struct sei_callback_data_s * callback_data = (struct sei_callback_data_s *) cbdata;
+    if(p_seidata->i_type == HXXX_SEI_USER_DATA_REGISTERED_ITU_T_T35)
+    {
+        if( p_seidata->i_type == HXXX_ITU_T35_TYPE_CC )
+        {
+            extract_cc(callback_data->p_sys, p_seidata->itu_t35.u.cc.p_data,
+                                             p_seidata->itu_t35.u.cc.i_data,
+                       callback_data->i_pts);
+        }
+    }
+    return true;
+}
+
+static inline void extract_cc_userdata(decoder_sys_t *p_sys, const uint8_t *p_buf, size_t i_buf, mtime_t i_pts)
+{
+    static const uint8_t p_cc_ga94[4] = { 0x47, 0x41, 0x39, 0x34 };
+    if(!memcmp(p_buf, p_cc_ga94, sizeof(p_cc_ga94)))
+    {
+        extract_cc(p_sys, p_buf, i_buf, i_pts);
+    }
+}
+
+static void extract_cc_block(decoder_t *p_dec, vlc_fourcc_t i_codec, block_t *p_block)
+{
+    decoder_sys_t *p_sys = p_dec->p_sys;
+
+    hxxx_iterator_ctx_t it;
+    hxxx_iterator_init(&it, p_block->p_buffer, p_block->i_buffer, 0);
+
+    const uint8_t *p_buf; size_t i_buf;
+    while(hxxx_annexb_iterate_next(&it, &p_buf, &i_buf))
+    {
+        if(i_buf < 7)
+            continue;
+
+        if( i_codec == VLC_CODEC_MPGV && p_buf[0] == 0xb2 )
+        {
+            extract_cc_userdata(p_sys, &p_buf[1], i_buf - 1, p_block->i_pts);
+        }
+        else if( i_codec == VLC_CODEC_H264 && (p_buf[0]&0x1f) == H264_NAL_SEI)
+        {
+            struct sei_callback_data_s cbdata;
+            cbdata.p_sys = p_sys;
+            cbdata.i_pts = p_block->i_pts;
+            HxxxParseSEI(p_buf, i_buf, 1, extract_cc_sei_callback, &cbdata);
+        }
+    }
+}
+
+/*****************************************************************************
  * DecodeVideo: Called to decode one or more frames
  *****************************************************************************/
 static picture_t *DecodeVideo( decoder_t *p_dec, block_t **pp_block )
@@ -714,10 +906,8 @@ static picture_t *DecodeVideo( decoder_t *p_dec, block_t **pp_block )
 
     /* Boolean for END_OF_SEQUENCE */
     bool eos_spotted = false;
-
-
-    block_t *p_block;
     mtime_t current_time = VLC_TS_INVALID;
+    block_t *p_block = pp_block ? *pp_block : NULL;
 
     if( !p_context->extradata_size && p_dec->fmt_in.i_extra )
     {
@@ -726,9 +916,9 @@ static picture_t *DecodeVideo( decoder_t *p_dec, block_t **pp_block )
             OpenVideoCodec( p_dec );
     }
 
-    p_block = pp_block ? *pp_block : NULL;
     if(!p_block && !(p_sys->p_codec->capabilities & CODEC_CAP_DELAY) )
         return NULL;
+
 
     if( p_sys->b_delayed_open )
     {
@@ -739,6 +929,37 @@ static picture_t *DecodeVideo( decoder_t *p_dec, block_t **pp_block )
 
     if( !check_block_validity( p_sys, p_block ) )
         return NULL;
+
+    if( p_block)
+    {
+        if( p_block->i_flags & (BLOCK_FLAG_DISCONTINUITY|BLOCK_FLAG_CORRUPTED) )
+        {
+            p_sys->i_pts = VLC_TS_INVALID; /* To make sure we recover properly */
+
+            p_sys->i_late_frames = 0;
+            if( p_block->i_flags & BLOCK_FLAG_CORRUPTED )
+            {
+                block_Release( p_block );
+                return NULL;
+            }
+        }
+
+        if( p_block->i_flags & BLOCK_FLAG_PREROLL )
+        {
+            /* Do not care about late frames when prerolling
+             * TODO avoid decoding of non reference frame
+             * (ie all B except for H264 where it depends only on nal_ref_idc) */
+            p_sys->i_late_frames = 0;
+        }
+
+        //printf("CODEC %4.4s %d bytes\n", (char*)&p_dec->fmt_in.i_codec, (*pp_block)->i_buffer);
+        if (p_dec->fmt_in.i_codec == VLC_CODEC_H264 ||
+            p_dec->fmt_in.i_codec == VLC_CODEC_MPGV)
+        {
+            extract_cc_block(p_dec, p_dec->fmt_in.i_codec, p_block);
+        }
+
+    }
 
     current_time = mdate();
     if( p_dec->b_frame_drop_allowed &&  check_block_being_late( p_sys, p_block, current_time) )
@@ -813,6 +1034,14 @@ static picture_t *DecodeVideo( decoder_t *p_dec, block_t **pp_block )
             pkt.size = p_block->i_buffer;
             pkt.pts = p_block->i_pts > VLC_TS_INVALID ? p_block->i_pts : AV_NOPTS_VALUE;
             pkt.dts = p_block->i_dts > VLC_TS_INVALID ? p_block->i_dts : AV_NOPTS_VALUE;
+
+            if( p_sys->cc[0].len )
+            {
+                uint8_t *sd = av_packet_new_side_data(&pkt, AV_PKT_DATA_REPLAYGAIN, p_sys->cc[0].len);
+                if( sd )
+                    memcpy( sd, p_sys->cc[0].data, p_sys->cc[0].len );
+                p_sys->cc[0].len = 0;
+            }
         }
         else
         {
@@ -997,7 +1226,15 @@ static picture_t *DecodeVideo( decoder_t *p_dec, block_t **pp_block )
         p_pic->i_nb_fields = 2 + frame->repeat_pict;
         p_pic->b_progressive = !frame->interlaced_frame;
         p_pic->b_top_field_first = frame->top_field_first;
-
+        
+        AVFrameSideData *sidedata = av_frame_get_side_data(frame, AV_FRAME_DATA_REPLAYGAIN);
+        if(sidedata && sidedata->size)
+        {
+            cc_ProbeAndExtract(&p_sys->lastcc, true, sidedata->data, sidedata->size);
+            p_sys->lastcc.b_reorder = true;
+            p_sys->i_cc_dts =
+            p_sys->i_cc_pts = i_pts;
+        }
         av_frame_free(&frame);
 
         /* Send decoded frame to vout */
@@ -1037,6 +1274,9 @@ void EndVideoDec( decoder_t *p_dec )
 
     if( p_sys->p_va )
         vlc_va_Delete( p_sys->p_va, p_sys->p_context );
+
+    if( p_sys->p_vanc )
+        vlc_ancillary_Delete( p_sys->p_vanc );
 
     vlc_sem_destroy( &p_sys->sem_mt );
 }
