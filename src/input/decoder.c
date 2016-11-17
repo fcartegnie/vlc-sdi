@@ -999,6 +999,12 @@ static int DecoderPlayVideo( decoder_t *p_dec, picture_t *p_picture,
 
     vlc_mutex_unlock( &p_owner->lock );
 
+    if( p_owner->ancillaries.p_anc )
+    {
+        p_picture->p_vanc = p_owner->ancillaries.p_anc;
+        p_owner->ancillaries.p_anc = NULL;
+    }
+
     /* FIXME: The *input* FIFO should not be locked here. This will not work
      * properly if/when pictures are queued asynchronously. */
     vlc_fifo_Lock( p_owner->p_fifo );

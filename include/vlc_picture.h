@@ -32,6 +32,7 @@
  */
 
 #include <vlc_es.h>
+#include <vlc_ancillary.h>
 
 /** Description of a planar graphic field */
 typedef struct plane_t
@@ -91,6 +92,9 @@ struct picture_t
     /** Private data - the video output plugin might want to put stuff here to
      * keep track of the picture */
     picture_sys_t * p_sys;
+
+    /** Video ancillary data */
+    vlc_ancillary_t *p_vanc;
 
     /** Next picture in a FIFO a pictures */
     struct picture_t *p_next;

@@ -304,6 +304,9 @@ void picture_Release( picture_t *p_picture )
     if( refs > 1 )
         return;
 
+    if( p_picture->p_vanc )
+        vlc_ancillary_Delete( p_picture->p_vanc );
+
     PictureDestroyContext( p_picture );
     assert( priv->gc.destroy != NULL );
     priv->gc.destroy( p_picture );
