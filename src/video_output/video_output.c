@@ -647,6 +647,13 @@ void vout_SetDisplayWindowSize(vout_thread_t *vout,
         vout_display_SendEventDisplaySize(vout->p->display.vd, width, height);
 }
 
+int vout_GetSupportedAncillaries(vout_thread_t *vout)
+{
+    if (vout->p->display.vd != NULL)
+        return vout->p->display.vd->info.supported_ancillaries_mask;
+    return 0;
+}
+
 /* */
 static picture_t *VoutVideoFilterInteractiveNewPicture(filter_t *filter)
 {

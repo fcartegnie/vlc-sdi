@@ -79,4 +79,6 @@ void vout_WindowMouseEvent( vout_thread_t *p_vout,
  */
 bool vout_IsEmpty( vout_thread_t *p_vout );
 
+int vout_GetSupportedAncillaries(vout_thread_t *vout);
+
 #endif
