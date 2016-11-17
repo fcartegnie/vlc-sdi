@@ -113,6 +113,7 @@ typedef struct {
     bool has_double_click;                  /* Is double-click generated */
     bool has_pictures_invalid;              /* Will VOUT_DISPLAY_EVENT_PICTURES_INVALID be used */
     const vlc_fourcc_t *subpicture_chromas; /* List of supported chromas for subpicture rendering. */
+    int  supported_ancillaries_mask;
 } vout_display_info_t;
 
 /**

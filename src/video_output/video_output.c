@@ -638,6 +638,13 @@ void vout_SetDisplayWindowSize(vout_thread_t *vout,
         vout_window_SetSize(window, width, height);
 }
 
+int vout_GetSupportedAncillaries(vout_thread_t *vout)
+{
+    if (vout->p->display.vd != NULL)
+        return vout->p->display.vd->info.supported_ancillaries_mask;
+    return 0;
+}
+
 /* */
 static int FilterRestartCallback(vlc_object_t *p_this, char const *psz_var,
                                  vlc_value_t oldval, vlc_value_t newval,
