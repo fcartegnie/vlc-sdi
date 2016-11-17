@@ -80,6 +80,25 @@ void cc_storage_commit( cc_storage_t *p_ccs, block_t *p_pic )
     cc_Flush( &p_ccs->next );
 }
 
+vlc_ancillary_t * cc_storage_copy_last_vanc( cc_storage_t *p_ccs )
+{
+    if( !p_ccs->next.i_data )
+        return NULL;
+
+    vlc_ancillary_t *p_anc = vlc_ancillary_New( ANCILLARY_CLOSED_CAPTIONS );
+    if( p_anc )
+    {
+        p_anc->cc.p_data = malloc( p_ccs->next.i_data );
+        if( p_anc->cc.p_data )
+        {
+            memcpy( p_anc->cc.p_data, p_ccs->next.p_data,
+                                      p_ccs->next.i_data );
+            p_anc->cc.i_data = p_ccs->next.i_data;
+        }
+    }
+    return p_anc;
+}
+
 block_t * cc_storage_get_current( cc_storage_t *p_ccs, bool pb_present[4] )
 {
     block_t *p_block;
