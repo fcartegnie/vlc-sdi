@@ -48,6 +48,8 @@
 #include "../packetizer/hxxx_sei.h"
 #include "../packetizer/h264_nal.h" /* H264_NAL_SEI */
 
+#define VANC_REORDER_DEPTH 64
+
 /*****************************************************************************
  * decoder_sys_t : decoder descriptor
  *****************************************************************************/
@@ -84,6 +86,12 @@ struct decoder_sys_t
     int level;
 
     vlc_sem_t sem_mt;
+
+    struct
+    {
+        int64_t i_reordered_opaque;
+        vlc_ancillary_t * p_vanc;
+    } vanc_reorder[VANC_REORDER_DEPTH];
 
     struct {
         mtime_t date;
@@ -534,6 +542,7 @@ int InitVideoDec( decoder_t *p_dec, AVCodecContext *p_context,
     p_context->get_buffer2 = lavc_GetFrame;
     p_context->refcounted_frames = true;
     p_context->opaque = p_dec;
+    p_context->reordered_opaque = 0;
 
 #ifdef HAVE_AVCODEC_MT
     int i_thread_count = var_InheritInteger( p_dec, "avcodec-threads" );
@@ -902,6 +911,16 @@ static void extract_cc_block(decoder_t *p_dec, vlc_fourcc_t i_codec, block_t *p_
     }
 }
 
+static const vlc_ancillary_t *GetVANC( vlc_ancillary_t *p_vanc, int type )
+{
+    for( ; p_vanc; p_vanc = p_vanc->p_next )
+    {
+        if( p_vanc->type == type )
+            return p_vanc;
+    }
+    return NULL;
+}
+
 /*****************************************************************************
  * DecodeVideo: Called to decode one or more frames
  *****************************************************************************/
@@ -1043,12 +1062,18 @@ static picture_t *DecodeVideo( decoder_t *p_dec, block_t **pp_block )
             pkt.pts = p_block->i_pts > VLC_TS_INVALID ? p_block->i_pts : AV_NOPTS_VALUE;
             pkt.dts = p_block->i_dts > VLC_TS_INVALID ? p_block->i_dts : AV_NOPTS_VALUE;
 
-            if( p_sys->cc[0].len )
+            if( p_sys->vanc_reorder[p_context->reordered_opaque % VANC_REORDER_DEPTH].p_vanc )
             {
-                uint8_t *sd = av_packet_new_side_data(&pkt, AV_PKT_DATA_REPLAYGAIN, p_sys->cc[0].len);
+                vlc_ancillary_Delete( p_sys->vanc_reorder[p_context->reordered_opaque % VANC_REORDER_DEPTH].p_vanc );
+                p_sys->vanc_reorder[p_context->reordered_opaque % VANC_REORDER_DEPTH].p_vanc = NULL;
+            }
+
+            if( p_sys->p_vanc )
+            {
+                uint8_t *sd = av_packet_new_side_data(&pkt, AV_PKT_DATA_REPLAYGAIN, sizeof(p_sys->p_vanc));
                 if( sd )
-                    memcpy( sd, p_sys->cc[0].data, p_sys->cc[0].len );
-                p_sys->cc[0].len = 0;
+                    p_sys->vanc_reorder[p_context->reordered_opaque % VANC_REORDER_DEPTH].p_vanc = p_sys->p_vanc;
+                p_sys->p_vanc = NULL;
             }
         }
         else
@@ -1087,6 +1112,11 @@ static picture_t *DecodeVideo( decoder_t *p_dec, block_t **pp_block )
         }
         i_used = ret != AVERROR(EAGAIN) ? pkt.size : 0;
         av_packet_unref( &pkt );
+
+        if( p_context->reordered_opaque == INT64_MAX )
+            p_context->reordered_opaque = 0;
+        else
+            p_context->reordered_opaque++;
 
         AVFrame *frame = av_frame_alloc();
         if (unlikely(frame == NULL))
@@ -1235,14 +1265,19 @@ static picture_t *DecodeVideo( decoder_t *p_dec, block_t **pp_block )
         p_pic->b_progressive = !frame->interlaced_frame;
         p_pic->b_top_field_first = frame->top_field_first;
         
-        AVFrameSideData *sidedata = av_frame_get_side_data(frame, AV_FRAME_DATA_REPLAYGAIN);
-        if(sidedata && sidedata->size)
-        {
-            cc_ProbeAndExtract(&p_sys->lastcc, true, sidedata->data, sidedata->size);
-            p_sys->lastcc.b_reorder = true;
-            p_sys->i_cc_dts =
-            p_sys->i_cc_pts = i_pts;
-        }
+        p_pic->p_vanc = p_sys->vanc_reorder[frame->reordered_opaque % VANC_REORDER_DEPTH].p_vanc;
+        p_sys->vanc_reorder[frame->reordered_opaque % VANC_REORDER_DEPTH].p_vanc = NULL;
+//        if( p_anc )
+//        {
+//            p_pic = p_anc
+//            const vlc_ancillary_t *p_ccdata = GetVANC( p_anc, ANCILLARY_CLOSED_CAPTIONS );
+//            if( p_ccdata )
+//                cc_ProbeAndExtract(&p_sys->lastcc, true, p_ccdata->cc.p_data, p_ccdata->cc.i_data);
+//            p_sys->lastcc.b_reorder = false;
+//            p_sys->i_cc_dts =
+//            p_sys->i_cc_pts = i_pts;
+//        }
+
         av_frame_free(&frame);
 
         /* Send decoded frame to vout */
@@ -1285,6 +1320,10 @@ void EndVideoDec( decoder_t *p_dec )
 
     if( p_sys->p_vanc )
         vlc_ancillary_Delete( p_sys->p_vanc );
+
+    for( int i=0; i<15; i++ )
+        if( p_sys->vanc_reorder[i].p_vanc )
+            vlc_ancillary_StorageDelete( p_sys->vanc_reorder[i].p_vanc );
 
     vlc_sem_destroy( &p_sys->sem_mt );
 }
