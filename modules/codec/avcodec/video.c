@@ -102,6 +102,13 @@ struct decoder_sys_t
     int seq;
 };
 
+static void SetVanc( decoder_t *p_dec, vlc_ancillary_t *p_anc )
+{
+    if( p_dec->p_sys->p_vanc )
+        vlc_ancillary_StorageDelete( p_dec->p_sys->p_vanc );
+    p_dec->p_sys->p_vanc = p_anc;
+}
+
 static vlc_ancillary_t * GetVanc( decoder_t *p_dec, int *pi_mask )
 {
     VLC_UNUSED( pi_mask );
@@ -611,6 +618,7 @@ int InitVideoDec( decoder_t *p_dec, AVCodecContext *p_context,
     p_dec->pf_flush        = Flush;
     p_dec->pf_get_cc       = GetCc;
     p_dec->pf_get_anc      = GetVanc;
+    p_dec->pf_set_anc      = SetVanc;
 
     return VLC_SUCCESS;
 }
