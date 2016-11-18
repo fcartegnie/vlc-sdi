@@ -59,6 +59,7 @@ struct frame_info_s
 {
     bool b_eos;
     bool b_display;
+    vlc_ancillary_t *p_vanc;
 };
 
 /*****************************************************************************
@@ -638,6 +639,9 @@ int InitVideoDec( vlc_object_t *obj )
     p_sys->i_last_output_frame = -1;
     p_sys->framedrop = FRAMEDROP_NONE;
 
+    for( size_t i=0; i<FRAME_INFO_DEPTH; i++ )
+        p_sys->frame_info[i].p_vanc = NULL;
+
     /* Set output properties */
     if( GetVlcChroma( &p_dec->fmt_out.video, p_context->pix_fmt ) != VLC_SUCCESS )
     {
@@ -975,6 +979,16 @@ static int DecodeSidedata( decoder_t *p_dec, const AVFrame *frame, picture_t *p_
     return 0;
 }
 
+static const vlc_ancillary_t *GetVANC( vlc_ancillary_t *p_vanc, int type )
+{
+    for( ; p_vanc; p_vanc = p_vanc->p_next )
+    {
+        if( p_vanc->type == type )
+            return p_vanc;
+    }
+    return NULL;
+}
+
 /*****************************************************************************
  * DecodeBlock: Called to decode one or more frames
  *              drains if pp_block == NULL
@@ -1113,6 +1127,12 @@ static int DecodeBlock( decoder_t *p_dec, block_t **pp_block )
             struct frame_info_s *p_frame_info = &p_sys->frame_info[p_context->reordered_opaque % FRAME_INFO_DEPTH];
             p_frame_info->b_eos = p_block && (p_block->i_flags & BLOCK_FLAG_END_OF_SEQUENCE);
             p_frame_info->b_display = b_need_output_picture;
+
+            if( p_sys->p_vanc )
+            {
+                vlc_ancillary_StoragePrepend( &p_frame_info->p_vanc, p_sys->p_vanc );
+                p_sys->p_vanc = NULL;
+            }
 
             p_context->reordered_opaque++;
             i_used = ret != AVERROR(EAGAIN) ? pkt.size : 0;
@@ -1294,6 +1314,10 @@ static int DecodeBlock( decoder_t *p_dec, block_t **pp_block )
         p_pic->b_progressive = !frame->interlaced_frame;
         p_pic->b_top_field_first = frame->top_field_first;
 
+        /* reclaim vanc if any */
+        p_pic->p_vanc = p_frame_info->p_vanc;
+        p_frame_info->p_vanc = NULL;
+
         if (DecodeSidedata(p_dec, frame, p_pic))
             i_pts = VLC_TS_INVALID;
 
@@ -1378,6 +1402,9 @@ void EndVideoDec( vlc_object_t *obj )
 
     if( p_sys->p_vanc )
         vlc_ancillary_Delete( p_sys->p_vanc );
+
+    for( size_t i=0; i<FRAME_INFO_DEPTH; i++ )
+        vlc_ancillary_StorageEmpty( &p_sys->frame_info[i].p_vanc );
 
     vlc_sem_destroy( &p_sys->sem_mt );
     free( p_sys );
