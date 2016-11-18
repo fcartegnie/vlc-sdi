@@ -115,6 +115,13 @@ typedef struct
     vlc_sem_t sem_mt;
 } decoder_sys_t;
 
+static void SetVanc( decoder_t *p_dec, vlc_ancillary_t *p_anc )
+{
+    decoder_sys_t *p_sys = p_dec->p_sys;
+    vlc_ancillary_StorageEmpty( &p_sys->p_vanc );
+    p_sys->p_vanc = p_anc;
+}
+
 static vlc_ancillary_t * GetVanc( decoder_t *p_dec, int *pi_mask )
 {
     decoder_sys_t *p_sys = p_dec->p_sys;
@@ -664,6 +671,7 @@ int InitVideoDec( vlc_object_t *obj )
     p_dec->pf_decode = DecodeVideo;
     p_dec->pf_flush  = Flush;
     p_dec->pf_get_anc      = GetVanc;
+    p_dec->pf_set_anc      = SetVanc;
     p_sys->p_vanc = NULL;
 
     /* XXX: Writing input format makes little sense. */
@@ -958,7 +966,7 @@ static int DecodeSidedata( decoder_t *p_dec, const AVFrame *frame, picture_t *p_
             if( p_anc )
             {
                 memcpy( p_anc->p_data, p_sys->cc.p_data, p_sys->cc.i_data );
-                vlc_ancillary_StorageAppend( &p_sys->p_vanc, p_anc );
+                vlc_ancillary_StoragePrepend( &p_sys->p_vanc, p_anc );
             }
 
             cc_Flush( &p_sys->cc );
