@@ -75,6 +75,9 @@ static const int pi_channels_maps[CHANNELS_MAX+1] =
 #define AFD_INDEX_TEXT "Active Format Descriptor"
 #define AFD_INDEX_LONGTEXT AFD_INDEX_TEXT " value"
 
+#define AFD_POLICY_TEXT AFD_INDEX_TEXT " policy"
+#define POLICY_LONGTEXT "Defines how to use source and local value"
+
 #define AR_INDEX_TEXT "Aspect Ratio"
 #define AR_INDEX_LONGTEXT AR_INDEX_TEXT " of the source picture"
 
@@ -181,6 +184,26 @@ static const char * const rgsz_ar_text[] = {
 };
 static_assert(ARRAY_SIZE(rgi_ar_values) == ARRAY_SIZE(rgsz_ar_text), "afd arrays messed up");
 
+static const char * rgsz_policy_values[] = {
+    "source",
+    "override",
+    "none",
+};
+
+static const char * const rgsz_policy_text[] = {
+    "Value if missing from source",
+    "Value only, ignore source",
+    "Ignore all, do not send",
+};
+
+enum vanc_policy_e
+{
+    VANC_POLICY_SOURCE = 0,
+    VANC_POLICY_OVERRIDE = 1,
+    VANC_POLICY_NONE = 2,
+};
+static_assert(ARRAY_SIZE(rgsz_policy_values) == ARRAY_SIZE(rgsz_policy_text), "afd pol arrays messed up");
+
 /* Only one audio output module and one video output module
  * can be used per process.
  * We use a static mutex in audio/video submodules entry points.  */
@@ -218,6 +241,7 @@ typedef struct decklink_sys_t
         picture_pool_t *pool;
         bool tenbits;
         uint8_t afd, ar;
+        enum vanc_policy_e afd_policy;
         int nosignal_delay;
         picture_t *pic_nosignal;
     } video;
@@ -266,6 +290,9 @@ vlc_module_begin()
     add_integer_with_range(VIDEO_CFG_PREFIX "afd", 8, 0, 16,
                 AFD_INDEX_TEXT, AFD_INDEX_LONGTEXT, true)
                 change_integer_list(rgi_afd_values, rgsz_afd_text)
+    add_string(VIDEO_CFG_PREFIX "afd-policy", "source",
+                AFD_POLICY_TEXT, POLICY_LONGTEXT, true)
+                change_string_list(rgsz_policy_values, rgsz_policy_text)
     add_integer_with_range(VIDEO_CFG_PREFIX "ar", 1, 0, 1,
                 AR_INDEX_TEXT, AR_INDEX_LONGTEXT, true)
                 change_integer_list(rgi_ar_values, rgsz_ar_text)
@@ -1095,9 +1122,12 @@ static void PrepareVideo(vout_display_t *vd, picture_t *picture, subpicture_t *)
         int line;
         void *buf;
 
-        const vlc_ancillary_t *p_afddata = GetVANC( picture, ANCILLARY_AFD );
-        if(p_afddata && p_afddata->afd.val > -1)
-            sys->video.afd = p_afddata->afd.val;
+        if(sys->video.afd_policy == VANC_POLICY_SOURCE)
+        {
+            const vlc_ancillary_t *p_afddata = GetVANC( picture, ANCILLARY_AFD );
+            if(p_afddata)
+                sys->video.afd = (p_afddata->afd.val > -1) ? p_afddata->afd.val : 0;
+        }
 
         const vlc_ancillary_t *p_ccdata = GetVANC( picture, ANCILLARY_CLOSED_CAPTIONS );
 
@@ -1109,13 +1139,16 @@ static void PrepareVideo(vout_display_t *vd, picture_t *picture, subpicture_t *)
             goto end;
         }
 
-        line = var_InheritInteger(vd, VIDEO_CFG_PREFIX "afd-line");
-        result = vanc->GetBufferForVerticalBlankingLine(line, &buf);
-        if (result != S_OK) {
-            msg_Err(vd, "Failed to get VBI line %d: %d", line, result);
-            goto end;
+        if(sys->video.afd_policy != VANC_POLICY_NONE)
+        {
+            line = var_InheritInteger(vd, VIDEO_CFG_PREFIX "afd-line");
+            result = vanc->GetBufferForVerticalBlankingLine(line, &buf);
+            if (result != S_OK) {
+                msg_Err(vd, "Failed to get VBI line %d: %d", line, result);
+                goto end;
+            }
+            send_AFD(sys->video.afd, sys->video.ar, (uint8_t*)buf);
         }
-        send_AFD(sys->video.afd, sys->video.ar, (uint8_t*)buf);
 
         line = var_InheritInteger(vd, VIDEO_CFG_PREFIX "cc-line");
         result = vanc->GetBufferForVerticalBlankingLine(line, &buf);
@@ -1204,6 +1237,15 @@ static int OpenVideo(vlc_object_t *p_this)
         sys->video.tenbits = var_InheritBool(p_this, VIDEO_CFG_PREFIX "tenbits");
         sys->video.nosignal_delay = var_InheritInteger(p_this, VIDEO_CFG_PREFIX "nosignal-delay");
         sys->video.afd = var_InheritInteger(p_this, VIDEO_CFG_PREFIX "afd");
+        char *psz_policy = var_InheritString(p_this, VIDEO_CFG_PREFIX "afd-policy");
+        sys->video.afd_policy = VANC_POLICY_NONE;
+        if(psz_policy)
+        {
+            if(!strcmp(psz_policy, rgsz_policy_values[VANC_POLICY_OVERRIDE]))
+                sys->video.afd_policy = VANC_POLICY_OVERRIDE;
+            else if(!strcmp(psz_policy, rgsz_policy_values[VANC_POLICY_SOURCE]))
+                sys->video.afd_policy = VANC_POLICY_SOURCE;
+        }
         sys->video.ar = var_InheritInteger(p_this, VIDEO_CFG_PREFIX "ar");
         sys->video.pic_nosignal = NULL;
         sys->video.pool = NULL;
