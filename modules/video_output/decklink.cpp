@@ -241,6 +241,7 @@ typedef struct decklink_sys_t
         picture_pool_t *pool;
         bool tenbits;
         uint8_t afd, ar;
+        int16_t bardata[4];
         enum vanc_policy_e afd_policy;
         int nosignal_delay;
         picture_t *pic_nosignal;
@@ -872,7 +873,8 @@ static void v210_convert(void *frame_bytes, picture_t *pic, int dst_stride)
     }
 }
 
-static void send_AFD(uint8_t afdcode, uint8_t ar, uint8_t *buf)
+static void send_AFD(uint8_t afdcode, uint8_t ar, int16_t bardata[4],
+                     uint8_t *buf)
 {
     const size_t len = 6 /* vanc header */ + 8 /* AFD data */ + 1 /* csum */;
     const size_t s = ((len + 5) / 6) * 6; // align for v210
@@ -886,14 +888,25 @@ static void send_AFD(uint8_t afdcode, uint8_t ar, uint8_t *buf)
     afd[4] = 0x05; // SDID
     afd[5] = 8; // Data Count
 
-    int bar_data_flags = 0;
-    int bar_data_val1 = 0;
-    int bar_data_val2 = 0;
+    uint16_t bar_data_flags = 0;
+    uint16_t bar_data_val1 = 0;
+    uint16_t bar_data_val2 = 0;
 
+    /* ATSC s2016-3 */
     afd[ 6] = ((afdcode & 0x0F) << 3) | ((ar & 0x01) << 2); /* SMPTE 2016-1 */
     afd[ 7] = 0; // reserved
     afd[ 8] = 0; // reserved
-    afd[ 9] = bar_data_flags << 4;
+    /* only top/down or left/right couples are valid */
+    for(int i=0;i<4 && bar_data_flags == 0; i+=2)
+    {
+        if(bardata[i] != -1 || bardata[i+1] != -1)
+        {
+            bar_data_flags = 0xC0 >> i;
+            bar_data_val1 = bardata[i] > -1 ? bardata[i] : 0;
+            bar_data_val2 = bardata[i+1] > -1 ? bardata[i+1] : 0;
+        }
+    }
+    afd[ 9] = bar_data_flags;
     afd[10] = bar_data_val1 << 8;
     afd[11] = bar_data_val1 & 0xff;
     afd[12] = bar_data_val2 << 8;
@@ -1127,6 +1140,15 @@ static void PrepareVideo(vout_display_t *vd, picture_t *picture, subpicture_t *)
             const vlc_ancillary_t *p_afddata = GetVANC( picture, ANCILLARY_AFD );
             if(p_afddata)
                 sys->video.afd = (p_afddata->afd.val > -1) ? p_afddata->afd.val : 0;
+
+            const vlc_ancillary_t *p_bardata = GetVANC( picture, ANCILLARY_BAR );
+            if(p_bardata)
+            {
+                sys->video.bardata[0] = p_bardata->bar.top;
+                sys->video.bardata[1] = p_bardata->bar.bottom;
+                sys->video.bardata[2] = p_bardata->bar.left;
+                sys->video.bardata[3] = p_bardata->bar.right;
+            }
         }
 
         const vlc_ancillary_t *p_ccdata = GetVANC( picture, ANCILLARY_CLOSED_CAPTIONS );
@@ -1147,7 +1169,7 @@ static void PrepareVideo(vout_display_t *vd, picture_t *picture, subpicture_t *)
                 msg_Err(vd, "Failed to get VBI line %d: %d", line, result);
                 goto end;
             }
-            send_AFD(sys->video.afd, sys->video.ar, (uint8_t*)buf);
+            send_AFD(sys->video.afd, sys->video.ar, sys->video.bardata, (uint8_t*)buf);
         }
 
         line = var_InheritInteger(vd, VIDEO_CFG_PREFIX "cc-line");
@@ -1249,6 +1271,8 @@ static int OpenVideo(vlc_object_t *p_this)
         sys->video.ar = var_InheritInteger(p_this, VIDEO_CFG_PREFIX "ar");
         sys->video.pic_nosignal = NULL;
         sys->video.pool = NULL;
+        for(int i=0;i<4;i++)
+            sys->video.bardata[i] = -1;
         video_format_Init( &sys->video.currentfmt, 0 );
 
         if (OpenDecklink(vd, sys) != VLC_SUCCESS)
