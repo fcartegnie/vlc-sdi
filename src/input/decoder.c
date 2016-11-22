@@ -107,14 +107,6 @@ struct decoder_owner_sys_t
 
     vout_thread_t   *p_vout;
 
-    struct
-    {
-        int decoder_provided_mask;
-        int packetizer_provided_mask;
-        int vout_requested_mask;
-        vlc_ancillary_t *p_anc;
-    } ancillaries;
-
     /* -- Theses variables need locking on read *and* write -- */
     /* Preroll */
     int64_t i_preroll_end;
@@ -133,6 +125,15 @@ struct decoder_owner_sys_t
     bool b_draining;
     atomic_bool drained;
     bool b_idle;
+
+    /* Ancillary */
+    struct
+    {
+        int decoder_provided_mask;
+        int packetizer_provided_mask;
+        int vout_requested_mask;
+        vlc_ancillary_t *p_anc;
+    } ancillaries;
 
     /* CC */
     struct
