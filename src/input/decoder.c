@@ -1256,6 +1256,42 @@ static void DecoderQueueAudio( decoder_t *p_dec, block_t *p_aout_buf )
     p_owner->pf_update_stat( p_owner, 1, lost );
 }
 
+static void DecoderPlayAncillary( decoder_t *p_dec, vlc_ancillary_t *p_anc )
+{
+    struct decoder_owner *p_owner = dec_get_owner( p_dec );
+
+    /* */
+    if( p_anc->i_date <= VLC_TS_INVALID )
+    {
+        msg_Warn( p_dec, "non-dated ancillary received" );
+        vlc_ancillary_StorageEmpty( &p_anc );
+        return;
+    }
+
+    /* */
+    vlc_mutex_lock( &p_owner->lock );
+
+    if( p_owner->b_waiting )
+    {
+        p_owner->b_has_data = true;
+        vlc_cond_signal( &p_owner->wait_acknowledge );
+    }
+
+    DecoderWaitUnblock( p_dec );
+    DecoderFixTs( p_dec, &p_anc->i_date, NULL, NULL, NULL, INT64_MAX );
+    vlc_mutex_unlock( &p_owner->lock );
+
+    if( p_anc->i_date <= VLC_TS_INVALID
+     || DecoderTimedWait( p_dec, p_anc->i_date - SPU_MAX_PREPARE_TIME ) )
+    {
+        vlc_ancillary_StorageEmpty( &p_anc );
+        return;
+    }
+
+    msg_Err(p_dec, "PUT ANC");
+    vout_PutAncillary( p_owner->p_vout, p_anc );
+}
+
 static void DecoderPlaySpu( decoder_t *p_dec, subpicture_t *p_subpic )
 {
     struct decoder_owner *p_owner = dec_get_owner( p_dec );
@@ -1291,6 +1327,33 @@ static void DecoderPlaySpu( decoder_t *p_dec, subpicture_t *p_subpic )
     }
 
     vout_PutSubpicture( p_vout, p_subpic );
+}
+
+static int DecoderQueueAncillary( decoder_t *p_dec, vlc_ancillary_t *p_anc )
+{
+    struct decoder_owner *p_owner = dec_get_owner( p_dec );
+    //input_thread_t *p_input = p_owner->p_input;
+    int i_ret = -1;
+    vout_thread_t *p_vout = input_resource_HoldVout( p_owner->p_resource );
+    if( p_vout )
+    {
+        msg_Err( p_dec, "HAS VOUT" );
+        vlc_mutex_lock( &p_owner->lock );
+        if( p_anc->i_date > VLC_TS_INVALID &&
+            p_anc->i_date < p_owner->i_preroll_end )
+        {
+            vlc_mutex_unlock( &p_owner->lock );
+            vlc_ancillary_StorageEmpty( &p_anc );
+        }
+        else
+        {
+            vlc_mutex_unlock( &p_owner->lock );
+            DecoderPlayAncillary( p_dec, p_anc );
+            i_ret = 0;
+        }
+        vlc_object_release( p_vout );
+    }
+    return i_ret;
 }
 
 static void DecoderUpdateStatSpu( struct decoder_owner *p_owner,
@@ -1340,6 +1403,13 @@ static void DecoderDecode( decoder_t *p_dec, block_t *p_block )
     {
         case VLCDEC_SUCCESS:
             p_owner->pf_update_stat( p_owner, 1, 0 );
+            if(p_dec->pf_get_anc)
+            {
+                int i_mask = 0xFF;
+                vlc_ancillary_t *p_anc = p_dec->pf_get_anc( p_dec, &i_mask );
+                if( p_anc )
+                    DecoderQueueAncillary( p_dec, p_anc );
+            }
             break;
         case VLCDEC_ECRITICAL:
             p_owner->error = true;

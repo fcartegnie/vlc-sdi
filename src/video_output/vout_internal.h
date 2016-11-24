@@ -269,6 +269,7 @@ void vout_DisplayTitle( vout_thread_t *p_vout, const char *psz_title );
  */
 bool vout_IsEmpty( vout_thread_t *p_vout );
 
+void vout_PutAncillary( vout_thread_t *, vlc_ancillary_t * );
 int vout_GetSupportedAncillaries(vout_thread_t *vout);
 
 #endif

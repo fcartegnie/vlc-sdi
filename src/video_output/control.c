@@ -39,6 +39,9 @@ void vout_control_cmd_Init(vout_control_cmd_t *cmd, int type)
 void vout_control_cmd_Clean(vout_control_cmd_t *cmd)
 {
     switch (cmd->type) {
+    case VOUT_CONTROL_ANCILLARY:
+        vlc_ancillary_StorageEmpty(&cmd->ancillary);
+        break;
     case VOUT_CONTROL_SUBPICTURE:
         if (cmd->subpicture)
             subpicture_Delete(cmd->subpicture);

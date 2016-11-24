@@ -226,6 +226,8 @@ typedef struct
     cea708_t *p_cea708;
     eia608_t *p_eia608;
     bool b_opaque;
+
+    vlc_ancillary_t *p_anc;
 } decoder_sys_t;
 
 static int Decode( decoder_t *, block_t * );
@@ -239,6 +241,16 @@ static void DTVCC_ServiceData_Handler( void *priv, uint8_t i_sid, mtime_t i_time
     //msg_Err( p_dec, "DTVCC_ServiceData_Handler sid %d bytes %ld", i_sid, i_data );
     if( i_sid == 1 )
         CEA708_Decoder_Push( p_sys->p_cea708, i_time, p_data, i_data );
+}
+
+static vlc_ancillary_t *GetVanc( decoder_t *p_dec, int *p_mask )
+{
+    decoder_sys_t *p_sys = p_dec->p_sys;
+    VLC_UNUSED( p_mask );
+    vlc_ancillary_t *p_anc = p_sys->p_anc;
+    p_sys->p_anc = NULL;
+    msg_Err(p_dec, "RETURN VANC");
+    return p_anc;
 }
 
 /*****************************************************************************
@@ -260,6 +272,8 @@ static int Open( vlc_object_t *p_this )
 
     p_dec->pf_decode = Decode;
     p_dec->pf_flush  = Flush;
+    p_dec->pf_get_anc    = GetVanc;//( p_dec->fmt_in.i_original_fourcc == 0 ) ? GetVanc : NULL;
+msg_Err(p_dec, "RETURN %X", p_dec->pf_get_anc);
 
     /* Allocate the memory needed to store the decoder's structure */
     p_dec->p_sys = p_sys = calloc( 1, sizeof( *p_sys ) );
@@ -344,11 +358,19 @@ static void     Convert( decoder_t *, mtime_t, const uint8_t *, size_t );
 
 static bool DoDecode( decoder_t *p_dec, bool b_drain )
 {
+    decoder_sys_t *p_sys = p_dec->p_sys;
     block_t *p_block = Pop( p_dec, b_drain );
     if( !p_block )
         return false;
 
     Convert( p_dec, p_block->i_pts, p_block->p_buffer, p_block->i_buffer );
+
+    vlc_ancillary_StorageEmpty( &p_sys->p_anc );
+
+    p_sys->p_anc = vlc_ancillary_New( ANCILLARY_CLOSED_CAPTIONS, p_block->i_buffer );
+    if( p_sys->p_anc )
+        memcpy( p_sys->p_anc->p_data, p_block->p_buffer, p_block->i_buffer );
+
     block_Release( p_block );
 
     return true;
@@ -420,6 +442,9 @@ static void Close( vlc_object_t *p_this )
     }
 
     block_ChainRelease( p_sys->p_queue );
+
+    vlc_ancillary_StorageEmpty( &p_sys->p_anc );
+
     free( p_sys );
 }
 
