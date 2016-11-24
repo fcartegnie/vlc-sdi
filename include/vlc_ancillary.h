@@ -55,6 +55,8 @@ struct vlc_ancillary_t
             int16_t right;
         } bar;
     };
+
+    mtime_t i_date;
 };
 
 static inline vlc_ancillary_t *

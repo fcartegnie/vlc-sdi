@@ -374,6 +374,15 @@ void vout_WindowMouseEvent(vout_thread_t *vout,
     vout_control_Push(&vout->p->control, &cmd);
 }
 
+void vout_PutAncillary( vout_thread_t *vout, vlc_ancillary_t *p_anc )
+{
+    vout_control_cmd_t cmd;
+    vout_control_cmd_Init(&cmd, VOUT_CONTROL_ANCILLARY);
+    cmd.u.ancillary = p_anc;
+
+    vout_control_Push(&vout->p->control, &cmd);
+}
+
 void vout_PutSubpicture( vout_thread_t *vout, subpicture_t *subpic )
 {
     vout_control_cmd_t cmd;
@@ -1593,6 +1602,11 @@ static int ThreadControl(vout_thread_t *vout, vout_control_cmd_t cmd)
         break;
     case VOUT_CONTROL_CANCEL:
         ThreadCancel(vout, cmd.u.boolean);
+        break;
+    case VOUT_CONTROL_ANCILLARY:
+        if(cmd.u.ancillary)
+            vlc_ancillary_StorageDelete(cmd.u.ancillary);
+        cmd.u.ancillary = NULL;
         break;
     case VOUT_CONTROL_SUBPICTURE:
         ThreadDisplaySubpicture(vout, cmd.u.subpicture);

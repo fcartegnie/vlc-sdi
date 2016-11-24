@@ -223,10 +223,21 @@ struct decoder_sys_t
 
     eia608_t eia608;
     bool b_opaque;
+
+    vlc_ancillary_t *p_vanc;
 };
 
 static subpicture_t *Decode( decoder_t *, block_t ** );
 static void Flush( decoder_t * );
+
+static vlc_ancillary_t *GetVanc( decoder_t *p_dec, int *p_mask )
+{
+    VLC_UNUSED( p_mask );
+    vlc_ancillary_t *p_anc = p_dec->p_sys->p_vanc;
+    p_dec->p_sys->p_vanc = NULL;
+    msg_Err(p_dec, "RETURN VANC");
+    return p_anc;
+}
 
 /*****************************************************************************
  * Open: probe the decoder and return score
@@ -262,7 +273,8 @@ static int Open( vlc_object_t *p_this )
 
     p_dec->pf_decode_sub = Decode;
     p_dec->pf_flush      = Flush;
-
+    p_dec->pf_get_anc    = GetVanc;//( p_dec->fmt_in.i_original_fourcc == 0 ) ? GetVanc : NULL;
+msg_Err(p_dec, "RETURN %X", p_dec->pf_get_anc);
     /* Allocate the memory needed to store the decoder's structure */
     p_dec->p_sys = p_sys = calloc( 1, sizeof( *p_sys ) );
     if( p_sys == NULL )
@@ -329,6 +341,25 @@ static subpicture_t *Decode( decoder_t *p_dec, block_t **pp_block )
         if( !p_sys->p_block )
             break;
 
+        if( p_sys->p_vanc )
+        {
+            vlc_ancillary_StorageDelete( p_sys->p_vanc );
+            p_sys->p_vanc = NULL;
+        }
+
+        vlc_ancillary_t *p_anc = vlc_ancillary_New( ANCILLARY_CLOSED_CAPTIONS );
+        if( p_anc )
+        {
+            p_anc->cc.p_data = malloc( p_sys->p_block->i_buffer );
+            if( p_anc->cc.p_data )
+            {
+                p_anc->cc.i_data = p_sys->p_block->i_buffer;
+                memcpy( p_anc->cc.p_data, p_sys->p_block->p_buffer, p_anc->cc.i_data );
+                vlc_ancillary_StorageAppend( &p_sys->p_vanc, p_anc );
+            }
+            else vlc_ancillary_Delete( p_anc );
+        }
+
         subpicture_t *p_spu = Convert( p_dec, &p_sys->p_block );
         if( p_spu )
             return p_spu;
@@ -343,6 +374,9 @@ static void Close( vlc_object_t *p_this )
 {
     decoder_t *p_dec = (decoder_t *)p_this;
     decoder_sys_t *p_sys = p_dec->p_sys;
+
+    if( p_sys->p_vanc )
+        vlc_ancillary_StorageDelete( p_sys->p_vanc );
 
     for( int i = 0; i < p_sys->i_block; i++ )
         block_Release( p_sys->pp_block[i] );

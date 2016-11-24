@@ -38,6 +38,7 @@ enum {
     VOUT_CONTROL_START,
     VOUT_CONTROL_STOP,
 #endif
+    VOUT_CONTROL_ANCILLARY ,            /* ancillarydata */
     VOUT_CONTROL_SUBPICTURE,            /* subpicture */
     VOUT_CONTROL_FLUSH_SUBPICTURE,      /* integer */
     VOUT_CONTROL_OSD_TITLE,             /* string */
@@ -101,6 +102,7 @@ typedef struct {
         const vout_configuration_t *cfg;
         subpicture_t *subpicture;
         vlc_viewpoint_t viewpoint;
+        vlc_ancillary_t *ancillary;
     } u;
 } vout_control_cmd_t;
 
