@@ -359,7 +359,7 @@ static int OpenDecklink(vlc_object_t *obj, decklink_sys_t *sys, const video_form
 
     int i_card_index = 0;//var_InheritInteger(vd, CFG_PREFIX "card-index");
     BMDVideoConnection vconn = bmdVideoConnectionSDI; //getVConn(obj);
-    char *mode = strdup("hp59");//var_InheritString(vd, VIDEO_CFG_PREFIX "mode");
+    char *mode = strdup("hp50");//var_InheritString(vd, VIDEO_CFG_PREFIX "mode");
     if(mode)
     {
         size_t len = strlen(mode);
@@ -627,7 +627,10 @@ static void DisplayVideo(vlc_object_t *obj, decklink_sys_t *sys, picture_t *pict
         return;
 
     picture_t *orig_picture = picture;
-
+if( picture->date - now >  5000 )
+{
+    msleep( picture->date - now );
+}
     if (now - picture->date > sys->video.nosignal_delay * CLOCK_FREQ) {
         msg_Dbg(obj, "no signal");
         if (sys->video.pic_nosignal) {
@@ -744,7 +747,7 @@ end:
 
 static decklink_sys_t * OpenVideo(vlc_object_t *p_this, const video_format_t *fmt)
 {
-    decklink_sys_t *sys = (decklink_sys_t *) calloc( 1, sizeof(sys) );
+    decklink_sys_t *sys = (decklink_sys_t *) calloc( 1, sizeof(*sys) );
 
     sys->video.tenbits = true;//var_InheritBool(p_this, VIDEO_CFG_PREFIX "tenbits");
     /*sys->nosignal_delay = var_InheritInteger(p_this, VIDEO_CFG_PREFIX "nosignal-delay");
@@ -768,7 +771,7 @@ static decklink_sys_t * OpenVideo(vlc_object_t *p_this, const video_format_t *fm
 //    fmt->i_width = p_sys->i_width;
 //    fmt->i_height = p_sys->i_height;
 
-    return NULL;
+    return sys;
 }
 
 static void CloseVideo(vlc_object_t *p_this)

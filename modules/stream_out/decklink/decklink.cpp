@@ -250,7 +250,13 @@ static int Send(sout_stream_t *p_stream, sout_stream_id_sys_t *id,
             }
 
         }
-        picture_Release( p_pic );
+p_pic = filter_chain_VideoFilter( id->p_f_chain, p_pic );
+if( p_pic )
+{
+
+        DisplayVideo(VLC_OBJECT(p_stream), p_stream->p_sys->p_decklink_sys, p_pic, NULL );
+}
+//        picture_Release( p_pic );
       //  msg_Err(p_stream, "DEC %4.4s",(char*) &p_pic->format.i_chroma);
     }
 
