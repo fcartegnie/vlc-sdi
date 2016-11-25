@@ -41,6 +41,8 @@
 struct sout_stream_sys_t
 {
     sout_stream_t     *p_out;
+
+    decklink_sys_t    *p_decklink_sys;
 };
 
 #define SOUT_CFG_PREFIX "sout-decklink-"
@@ -216,7 +218,6 @@ static int Send(sout_stream_t *p_stream, sout_stream_id_sys_t *id,
 
     //msg_Err(p_stream, "DEC %ld %ld", p_buffer->i_dts, p_buffer->i_flags);
 
-
     picture_t *p_pic;
     while( (p_pic = id->p_decoder->pf_decode_video( id->p_decoder, &p_buffer )) )
     {
@@ -234,6 +235,20 @@ static int Send(sout_stream_t *p_stream, sout_stream_id_sys_t *id,
             es_format_Copy( &id->decoder_lastfmtout, &id->p_decoder->fmt_out );
 
             msg_Err( p_stream, "decoder output format now %4.4s", (char*)&id->p_decoder->fmt_out.i_codec );
+
+
+            if( p_stream->p_sys->p_decklink_sys == NULL )
+            {
+                p_stream->p_sys->p_decklink_sys = OpenVideo(VLC_OBJECT(p_stream), & filter_chain_GetFmtOut( id->p_f_chain )->video );
+                if( p_stream->p_sys->p_decklink_sys == NULL )
+                {
+                    picture_Release( p_pic );
+                    if( p_buffer )
+                        block_Release( p_buffer );
+                    return VLC_EGENERIC;
+                }
+            }
+
         }
         picture_Release( p_pic );
       //  msg_Err(p_stream, "DEC %4.4s",(char*) &p_pic->format.i_chroma);
@@ -265,8 +280,10 @@ return VLC_EGENERIC;
 static int Open(vlc_object_t *p_this)
 {
     sout_stream_t *p_stream = reinterpret_cast<sout_stream_t*>(p_this);
-    sout_stream_sys_t *p_sys = NULL;
+    sout_stream_sys_t *p_sys = new sout_stream_sys_t;
 
+    p_sys->p_decklink_sys = NULL;
+    p_sys->p_out = NULL;
 //    config_ChainParse(p_stream, SOUT_CFG_PREFIX, ppsz_sout_options, p_stream->p_cfg);
 
     /*p_sys = new(std::nothrow) sout_stream_sys_t( p_intf, b_has_video, i_local_server_port,

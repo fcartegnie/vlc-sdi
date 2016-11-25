@@ -43,9 +43,13 @@ sout_LTLIBRARIES = \
 	libstream_out_setid_plugin.la \
 	libstream_out_transcode_plugin.la
 
+if HAVE_DECKLINK
+libstream_out_decklink_plugin_la_CXXFLAGS = $(AM_CXXFLAGS) $(CPPFLAGS_decklinkoutput)
+libstream_out_decklink_plugin_la_LIBADD = $(LIBS_decklink) $(LIBDL) -lpthread
 libstream_out_decklink_plugin_la_SOURCES = stream_out/decklink/decklink.cpp \
         stream_out/decklink/decklink.hpp
 sout_LTLIBRARIES += libstream_out_decklink_plugin.la
+endif
 
 # RTP plugin
 sout_LTLIBRARIES += libstream_out_rtp_plugin.la
