@@ -961,7 +961,7 @@ static void send_CC(vout_display_t *vd, cc_data_t *cc, uint8_t *buf)
     delete[] cdp;
 }
 
-static void DisplayVideo(vout_display_t *vd, picture_t *picture, subpicture_t *)
+static void PrepareVideo(vout_display_t *vd, picture_t *picture, subpicture_t *)
 {
     vout_display_sys_t *sys = vd->sys;
     struct decklink_sys_t *decklink_sys = GetDLSys(VLC_OBJECT(vd));
@@ -1104,7 +1104,11 @@ static void DisplayVideo(vout_display_t *vd, picture_t *picture, subpicture_t *)
 end:
     if (pDLVideoFrame)
         pDLVideoFrame->Release();
-    picture_Release(orig_picture);
+}
+
+static void DisplayVideo(vout_display_t *, picture_t *picture, subpicture_t *)
+{
+    picture_Release(picture);
 }
 
 static int ControlVideo(vout_display_t *vd, int query, va_list args)
@@ -1171,7 +1175,7 @@ static int OpenVideo(vlc_object_t *p_this)
     }
     vd->info.has_hide_mouse = true;
     vd->pool    = PoolVideo;
-    vd->prepare = NULL;
+    vd->prepare = PrepareVideo;
     vd->display = DisplayVideo;
     vd->control = ControlVideo;
     vd->manage  = NULL;
