@@ -619,6 +619,8 @@ static struct decklink_sys_t *OpenDecklink(vout_display_t *vd)
         fmt->i_sar_num = 0;
         fmt->i_sar_den = 0;
         fmt->i_chroma = !sys->tenbits ? VLC_CODEC_UYVY : VLC_CODEC_I422_10L; /* we will convert to v210 */
+        fmt->i_frame_rate = (unsigned) decklink_sys->frameduration;
+        fmt->i_frame_rate_base = (unsigned) decklink_sys->timescale;
     }
 
     result = p_attrs->GetInt(BMDDeckLinkMaximumAudioChannels,
