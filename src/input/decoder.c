@@ -1010,10 +1010,6 @@ static void DecoderPlayVideo( decoder_t *p_dec, picture_t *p_picture,
             vout_Flush( p_vout, VLC_TS_OLDEST );
     }
 
-    if( p_dec->pf_get_anc &&
-       ( !p_owner->p_packetizer || !p_owner->p_packetizer->pf_get_anc ) )
-        DecoderGetVanc( p_dec, 0xFF );
-
     if( p_picture->date == VLC_TS_INVALID )
     {
         msg_Warn( p_dec, "non-dated video buffer received" );
