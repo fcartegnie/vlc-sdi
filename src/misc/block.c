@@ -34,6 +34,7 @@
 #include <vlc_common.h>
 #include <vlc_block.h>
 #include <vlc_fs.h>
+#include <vlc_ancillary.h>
 
 #ifndef NDEBUG
 static void BlockNoRelease( block_t *b )
@@ -67,6 +68,7 @@ static void block_Invalidate (block_t *block)
     block->p_next = NULL;
     block_Check (block);
     block->pf_release = BlockNoRelease;
+    vlc_ancillary_StorageEmpty(&block->p_anc);
 }
 #else
 # define block_Check(b) ((void)(b))
@@ -86,6 +88,7 @@ void block_Init( block_t *restrict b, void *buf, size_t size )
     b->i_pts =
     b->i_dts = VLC_TS_INVALID;
     b->i_length = 0;
+    b->p_anc = NULL;
 #ifndef NDEBUG
     b->pf_release = BlockNoRelease;
 #endif
@@ -107,6 +110,8 @@ static void BlockMetaCopy( block_t *restrict out, const block_t *in )
     out->i_pts     = in->i_pts;
     out->i_flags   = in->i_flags;
     out->i_length  = in->i_length;
+    if( in->p_anc )
+        vlc_ancillary_StorageMerge( &out->p_anc, in->p_anc );
 }
 
 /** Initial memory alignment of data block.
