@@ -23,6 +23,8 @@
 typedef enum
 {
     ANCILLARY_UNDEFINED       = 0,
+    ANCILLARY_AFD             = 1 << 0,
+    ANCILLARY_BAR             = 1 << 1,
 
 } vlc_ancillary_type_t;
 
@@ -32,6 +34,24 @@ struct vlc_ancillary_t
     uint8_t *p_data;
     size_t   i_data;
     vlc_ancillary_type_t type;
+
+    /* toremove below */
+    union
+    {
+        struct
+        {
+            int8_t val;
+        } afd;
+        struct
+        {
+            int16_t top;
+            int16_t bottom;
+            int16_t left;
+            int16_t right;
+        } bar;
+    };
+
+    mtime_t i_date;
 };
 
 static inline void vlc_ancillary_Delete( vlc_ancillary_t *p_anc )
