@@ -385,6 +385,17 @@ struct video_format_t
         uint16_t MaxFALL; /* max frame average light level */
     } lighting;
     uint32_t i_cubemap_padding; /**< padding in pixels of the cube map faces */
+
+    /* Active format description */
+    uint8_t i_afd;
+    /* Bar data */
+    struct
+    {
+        int16_t top;
+        int16_t bottom;
+        int16_t left;
+        int16_t right;
+    } bardata;
 };
 
 /**
