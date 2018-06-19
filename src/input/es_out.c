@@ -3146,6 +3146,19 @@ static void EsOutUpdateInfo( es_out_t *out, es_out_id_t *es, const es_format_t *
     case VIDEO_ES:
         info_category_AddInfo( p_cat, _("Type"), _("Video") );
 
+        if( fmt->video.i_afd != 0x00 )
+        {
+            info_category_AddInfo( p_cat, "AFD", "%u", fmt->video.i_afd );
+            if( fmt->video.i_afd == 0x04 )
+            {
+                info_category_AddInfo( p_cat, "Bardata", "%u %u %u %u",
+                                       fmt->video.bardata.bottom,
+                                       fmt->video.bardata.top,
+                                       fmt->video.bardata.left,
+                                       fmt->video.bardata.right);
+            }
+        }
+
         if( fmt->video.i_visible_width > 0 &&
             fmt->video.i_visible_height > 0 )
             info_category_AddInfo( p_cat, _("Video resolution"), "%ux%u",
