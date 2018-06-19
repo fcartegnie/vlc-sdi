@@ -540,13 +540,22 @@ static int vout_update_format( decoder_t *p_dec )
         }
     }
 
-    if ( memcmp( &p_dec->fmt_out.video.mastering,
-                 &p_owner->fmt.video.mastering,
-                 sizeof(p_owner->fmt.video.mastering)) ||
-         p_dec->fmt_out.video.lighting.MaxCLL !=
-         p_owner->fmt.video.lighting.MaxCLL ||
-         p_dec->fmt_out.video.lighting.MaxFALL !=
-         p_owner->fmt.video.lighting.MaxFALL)
+    bool b_metadata_changed = ( memcmp( &p_dec->fmt_out.video.mastering,
+                                        &p_owner->fmt.video.mastering,
+                                        sizeof(p_owner->fmt.video.mastering)) ||
+                                p_dec->fmt_out.video.lighting.MaxCLL !=
+                                p_owner->fmt.video.lighting.MaxCLL ||
+                                p_dec->fmt_out.video.lighting.MaxFALL !=
+                                p_owner->fmt.video.lighting.MaxFALL);
+
+    b_metadata_changed |= ( p_dec->fmt_out.video.i_afd != p_owner->fmt.video.i_afd ||
+            ( p_dec->fmt_out.video.i_afd == 4 &&
+              (p_dec->fmt_out.video.bardata.bottom != p_owner->fmt.video.bardata.bottom ||
+               p_dec->fmt_out.video.bardata.top != p_owner->fmt.video.bardata.top ||
+               p_dec->fmt_out.video.bardata.left != p_owner->fmt.video.bardata.left ||
+               p_dec->fmt_out.video.bardata.right != p_owner->fmt.video.bardata.right)));
+
+    if ( b_metadata_changed )
     {
         /* the format has changed but we don't need a new vout */
         vlc_mutex_lock( &p_owner->lock );
