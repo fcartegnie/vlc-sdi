@@ -5,6 +5,7 @@
 #include <vlc_common.h>
 #include <vlc_plugin.h>
 #include <vlc_threads.h>
+#include <vlc_interrupt.h>
 
 #include <vlc_vout_display.h>
 #include <vlc_picture_pool.h>
@@ -469,7 +470,7 @@ static int OpenDecklink(vlc_object_t *obj, decklink_sys_t *sys, const video_form
 
     /* start */
     result = sys->p_output->StartScheduledPlayback(
-        (mdate() * sys->timescale) / CLOCK_FREQ, sys->timescale, 1.0);
+        (vlc_tick_now() * sys->timescale) / CLOCK_FREQ, sys->timescale, 1.0);
     CHECK("Could not start playback");
 
     p_config->Release();
@@ -595,7 +596,7 @@ static void send_AFD(uint8_t afdcode, uint8_t ar, uint8_t *buf)
 
     /* parity bit */
     for (size_t i = 3; i < len - 1; i++)
-        afd[i] |= parity(afd[i]) ? 0x100 : 0x200;
+        afd[i] |= vlc_parity(afd[i]) ? 0x100 : 0x200;
 
     /* vanc checksum */
     uint16_t vanc_sum = 0;
@@ -621,7 +622,7 @@ static void send_AFD(uint8_t afdcode, uint8_t ar, uint8_t *buf)
 
 static void DisplayVideo(vlc_object_t *obj, decklink_sys_t *sys, picture_t *picture, subpicture_t *)
 {
-    mtime_t now = mdate();
+    mtime_t now = vlc_tick_now();
 
     if (!picture)
         return;
@@ -629,7 +630,7 @@ static void DisplayVideo(vlc_object_t *obj, decklink_sys_t *sys, picture_t *pict
     picture_t *orig_picture = picture;
 if( picture->date - now >  5000 )
 {
-    msleep( picture->date - now );
+    vlc_msleep_i11e( picture->date - now );
 }
     if (now - picture->date > sys->video.nosignal_delay * CLOCK_FREQ) {
         msg_Dbg(obj, "no signal");
@@ -727,7 +728,7 @@ if( picture->date - now >  5000 )
         goto end;
     }
 
-    now = mdate() - sys->offset;
+    now = vlc_tick_now() - sys->offset;
 
     BMDTimeValue decklink_now;
     double speed;
