@@ -53,8 +53,14 @@ sout_LTLIBRARIES = \
 if HAVE_DECKLINK
 libstream_out_decklink_plugin_la_CXXFLAGS = $(AM_CXXFLAGS) $(CPPFLAGS_decklinkoutput)
 libstream_out_decklink_plugin_la_LIBADD = $(LIBS_decklink) $(LIBDL) -lpthread
-libstream_out_decklink_plugin_la_SOURCES = stream_out/decklink/decklink.cpp \
-        stream_out/decklink/decklink.hpp
+libstream_out_decklink_plugin_la_SOURCES = stream_out/sdi/decklink.cpp \
+        stream_out/sdi/decklink.hpp \
+        stream_out/sdi/DBMSDIOutput.cpp \
+        stream_out/sdi/DBMSDIOutput.hpp \
+        stream_out/sdi/SDIOutput.cpp \
+        stream_out/sdi/SDIOutput.hpp \
+        stream_out/sdi/SDIOutputStream.cpp \
+        stream_out/sdi/SDIOutputStream.hpp
 sout_LTLIBRARIES += libstream_out_decklink_plugin.la
 endif
 
