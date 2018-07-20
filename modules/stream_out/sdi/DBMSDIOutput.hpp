@@ -9,6 +9,9 @@
 
 namespace sdi_sout
 {
+    class VideoDecodedStream;
+    class AudioDecodedStream;
+
     class DBMSDIOutput : public SDIOutput
     {
         public:
@@ -17,11 +20,13 @@ namespace sdi_sout
             virtual AbstractStream *Add(const es_format_t *); /* reimpl */
             virtual void Del(AbstractStream *); /* reimpl */
             virtual int Open(); /* impl */
+            virtual int Process(); /* impl */
 
         protected:
-            AbstractStream *videoStream;
-            AbstractStream *audioStream;
-            int Process(picture_t *);
+            VideoDecodedStream *videoStream;
+            AudioDecodedStream *audioStream;
+            int ProcessVideo(picture_t *);
+            int ProcessAudio(block_t *);
 
         private:
             IDeckLink *p_card;
@@ -34,19 +39,25 @@ namespace sdi_sout
 
             struct
             {
-                video_format_t currentfmt;
+                es_format_t configuredfmt;
 //                picture_pool_t *pool;
                 bool tenbits;
-                uint8_t afd, ar;
                 int nosignal_delay;
                 picture_t *pic_nosignal;
             } video;
 
             struct
             {
+                es_format_t configuredfmt;
                 int i_rate;
 //                int i_channels;
             } audio;
+
+            struct
+            {
+                uint8_t afd, ar;
+                unsigned afd_line;
+            } ancillary;
 
             bool b_running;
             int ConfigureVideo(const video_format_t *);

@@ -34,7 +34,6 @@
 #include <vlc_sout.h>
 #include <vlc_plugin.h>
 
-#define FRAME_SIZE 1920
 #define CHANNELS_MAX 6
 
 #if 0
@@ -174,7 +173,8 @@ static int OpenDecklinkSDI(vlc_object_t *p_this)
 {
     sout_stream_t *p_stream = reinterpret_cast<sout_stream_t*>(p_this);
     sdi_sout::DBMSDIOutput *output = new sdi_sout::DBMSDIOutput(p_stream);
-    if(output->Open() != VLC_SUCCESS)
+
+    if(output->Open() != VLC_SUCCESS && !FORCE_INPUT)
     {
         delete output;
         return VLC_EGENERIC;

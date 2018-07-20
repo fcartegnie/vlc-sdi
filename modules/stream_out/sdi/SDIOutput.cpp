@@ -16,7 +16,7 @@ SDIOutput::SDIOutput(sout_stream_t *p_stream_)
     p_stream->pf_send    = SoutCallback_Send;
     p_stream->pf_flush   = SoutCallback_Flush;
     p_stream->pf_control = SoutCallback_Control;
-
+    p_stream->pace_nocontrol = true;
 }
 
 SDIOutput::~SDIOutput()
@@ -26,11 +26,15 @@ SDIOutput::~SDIOutput()
 
 AbstractStream *SDIOutput::Add(const es_format_t *fmt)
 {
-    if( fmt->i_cat != VIDEO_ES )
-        return NULL;
+    AbstractStream *s;
+    if(fmt->i_cat == VIDEO_ES)
+        s = new VideoDecodedStream(VLC_OBJECT(p_stream));
+    else if(fmt->i_cat == AUDIO_ES)
+        s = new AudioDecodedStream(VLC_OBJECT(p_stream));
+    else
+        s = NULL;
 
-     AbstractStream *s = new VideoDecodedStream(VLC_OBJECT(p_stream));
-     if(!s->init(fmt))
+     if(s && !s->init(fmt))
      {
          delete s;
          return NULL;
@@ -38,9 +42,17 @@ AbstractStream *SDIOutput::Add(const es_format_t *fmt)
      return s;
 }
 
+int SDIOutput::Send(AbstractStream *id, block_t *p)
+{
+    int ret = id->Send(p);
+    Process();
+    return ret;
+}
+
 void SDIOutput::Del(AbstractStream *s)
 {
     delete s;
+    Process();
 }
 
 int SDIOutput::Control(int, va_list)
@@ -60,9 +72,10 @@ void SDIOutput::SoutCallback_Del(sout_stream_t *p_stream, void *id)
     me->Del(reinterpret_cast<AbstractStream *>(id));
 }
 
-int SDIOutput::SoutCallback_Send(sout_stream_t *, void *id, block_t *p_block)
+int SDIOutput::SoutCallback_Send(sout_stream_t *p_stream, void *id, block_t *p_block)
 {
-    return reinterpret_cast<AbstractStream *>(id)->Send(p_block);
+    SDIOutput *me = reinterpret_cast<SDIOutput *>(p_stream->p_sys);
+    return me->Send(reinterpret_cast<AbstractStream *>(id), p_block);
 }
 
 int SDIOutput::SoutCallback_Control(sout_stream_t *p_stream, int query, va_list args)

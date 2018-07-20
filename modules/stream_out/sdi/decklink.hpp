@@ -19,3 +19,5 @@
 #define CFG_PREFIX "decklink-output-"
 #define VIDEO_CFG_PREFIX "decklink-vout-"
 #define AUDIO_CFG_PREFIX "decklink-aout-"
+
+#define FORCE_INPUT 1

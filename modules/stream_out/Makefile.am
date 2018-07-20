@@ -60,7 +60,9 @@ libstream_out_decklink_plugin_la_SOURCES = stream_out/sdi/decklink.cpp \
         stream_out/sdi/SDIOutput.cpp \
         stream_out/sdi/SDIOutput.hpp \
         stream_out/sdi/SDIOutputStream.cpp \
-        stream_out/sdi/SDIOutputStream.hpp
+        stream_out/sdi/SDIOutputStream.hpp \
+        stream_out/sdi/V210.cpp \
+        stream_out/sdi/V210.hpp
 sout_LTLIBRARIES += libstream_out_decklink_plugin.la
 endif
 

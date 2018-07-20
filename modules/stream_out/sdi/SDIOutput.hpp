@@ -13,7 +13,9 @@ namespace sdi_sout
             SDIOutput(sout_stream_t *);
             virtual ~SDIOutput();
             virtual int Open() = 0;
+            virtual int Process() = 0;
             virtual AbstractStream *Add(const es_format_t *);
+            virtual int   Send(AbstractStream *, block_t *);
             virtual void  Del(AbstractStream *);
             virtual int   Control(int, va_list);
 

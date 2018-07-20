@@ -3,6 +3,8 @@
 #endif
 
 #include "DBMSDIOutput.hpp"
+#include "SDIOutputStream.hpp"
+#include "V210.hpp"
 
 #include <DeckLinkAPIDispatch.cpp>
 #include "decklink.hpp"
@@ -20,12 +22,15 @@ DBMSDIOutput::DBMSDIOutput(sout_stream_t *p_stream) :
     p_card = NULL;
     p_output = NULL;
     offset = 0;
-    video_format_Init(&video.currentfmt, 0);
+    es_format_Init(&video.configuredfmt, VIDEO_ES, 0);
+    es_format_Init(&audio.configuredfmt, VIDEO_ES, 0);
     video.tenbits = var_InheritBool(p_stream, VIDEO_CFG_PREFIX "tenbits");
     video.nosignal_delay = var_InheritInteger(p_stream, VIDEO_CFG_PREFIX "nosignal-delay");
-    video.afd = var_InheritInteger(p_stream, VIDEO_CFG_PREFIX "afd");
-    video.ar = var_InheritInteger(p_stream, VIDEO_CFG_PREFIX "ar");
     video.pic_nosignal = NULL;
+    audio.i_rate = var_InheritInteger(p_stream, AUDIO_CFG_PREFIX "audio-rate");;
+    ancillary.afd = var_InheritInteger(p_stream, VIDEO_CFG_PREFIX "afd");
+    ancillary.ar = var_InheritInteger(p_stream, VIDEO_CFG_PREFIX "ar");
+    ancillary.afd_line = var_InheritInteger(p_stream, VIDEO_CFG_PREFIX "afd-line");
     videoStream = NULL;
     audioStream = NULL;
     b_running = false;
@@ -35,7 +40,8 @@ DBMSDIOutput::~DBMSDIOutput()
 {
     if(video.pic_nosignal)
         picture_Release(video.pic_nosignal);
-    video_format_Clean(&video.currentfmt);
+    es_format_Clean(&video.configuredfmt);
+    es_format_Clean(&audio.configuredfmt);
     if(p_output)
     {
         p_output->StopScheduledPlayback(0, NULL, 0);
@@ -49,21 +55,32 @@ DBMSDIOutput::~DBMSDIOutput()
 
 AbstractStream *DBMSDIOutput::Add(const es_format_t *fmt)
 {
+    AbstractStream *s = NULL;
     if(fmt->i_cat == VIDEO_ES && !videoStream)
     {
         if(ConfigureVideo(&fmt->video) == VLC_SUCCESS)
-            videoStream = SDIOutput::Add(fmt);
-        if( videoStream )
-            Start();
-        return videoStream;
+            s = videoStream = dynamic_cast<VideoDecodedStream *>(SDIOutput::Add(fmt));
+        videoStream->setOutputFormat(&video.configuredfmt);
     }
-    else if(fmt->i_cat == AUDIO_ES && !videoStream)
+    else if(fmt->i_cat == AUDIO_ES && audio.i_rate && !audioStream)
     {
         if(ConfigureAudio(&fmt->audio) == VLC_SUCCESS)
-            audioStream = SDIOutput::Add(fmt);
-        return audioStream;
+            s = audioStream = dynamic_cast<AudioDecodedStream *>(SDIOutput::Add(fmt));
+        audioStream->setOutputFormat(&audio.configuredfmt);
     }
-    else return NULL;
+
+    if(s)
+    {
+        if( videoStream && (audioStream || audio.i_rate <= 0) )
+            Start();
+    }
+    else
+    {
+        msg_Err(p_stream, "rejecting stream %4.4s id %d",
+                &fmt->i_codec, fmt->i_profile);
+    }
+
+    return s;
 }
 
 void DBMSDIOutput::Del(AbstractStream *id)
@@ -263,15 +280,18 @@ int DBMSDIOutput::ConfigureAudio(const audio_format_t *)
 {
     HRESULT result;
 
+    if(FORCE_INPUT)
+        return VLC_SUCCESS;
+
     if(!p_output || b_running)
         return VLC_EGENERIC;
 
-    if (/*decklink_sys->i_channels > 0 &&*/ audio.i_rate > 0)
+    if (audio.i_rate > 0)
     {
         result = p_output->EnableAudioOutput(
                     audio.i_rate,
                     bmdAudioSampleType16bitInteger,
-                    /*decklink_sys->i_channels*/ 2,
+                    2,
                     bmdAudioOutputStreamTimestamped);
         CHECK("Could not start audio output");
     }
@@ -313,10 +333,15 @@ int DBMSDIOutput::ConfigureVideo(const video_format_t *vfmt)
     IDeckLinkDisplayMode *p_display_mode = NULL;
     char *psz_string = NULL;
 
+    if(FORCE_INPUT)
+        return VLC_SUCCESS;
+
     if(!p_output || b_running)
         return VLC_EGENERIC;
 
     /* Now configure card */
+    if(!p_output)
+        return VLC_EGENERIC;
 
     result = p_card->QueryInterface(IID_IDeckLinkConfiguration, (void**)&p_config);
     CHECK("Could not get config interface");
@@ -403,7 +428,7 @@ int DBMSDIOutput::ConfigureVideo(const video_format_t *vfmt)
         result = p_output->EnableVideoOutput(mode_id, flags);
         CHECK("Could not enable video output");
 
-        video_format_t *fmt = &video.currentfmt;
+        video_format_t *fmt = &video.configuredfmt.video;
         video_format_Copy(fmt, vfmt);
         fmt->i_width = fmt->i_visible_width = p_display_mode->GetWidth();
         fmt->i_height = fmt->i_visible_height = p_display_mode->GetHeight();
@@ -435,6 +460,8 @@ error:
 int DBMSDIOutput::Start()
 {
     HRESULT result;
+    if(FORCE_INPUT)
+        return VLC_SUCCESS;
     if(b_running)
         return VLC_EGENERIC;
     result = p_output->StartScheduledPlayback(
@@ -451,66 +478,6 @@ static inline void put_le32(uint8_t **p, uint32_t d)
 {
     SetDWLE(*p, d);
     (*p) += 4;
-}
-
-static inline int clip(int a)
-{
-    if      (a < 4) return 4;
-    else if (a > 1019) return 1019;
-    else               return a;
-}
-
-static void v210_convert(void *frame_bytes, picture_t *pic, int dst_stride)
-{
-    int width = pic->format.i_width;
-    int height = pic->format.i_height;
-    int line_padding = dst_stride - ((width * 8 + 11) / 12) * 4;
-    int h, w;
-    uint8_t *data = (uint8_t*)frame_bytes;
-
-    const uint16_t *y = (const uint16_t*)pic->p[0].p_pixels;
-    const uint16_t *u = (const uint16_t*)pic->p[1].p_pixels;
-    const uint16_t *v = (const uint16_t*)pic->p[2].p_pixels;
-
-#define WRITE_PIXELS(a, b, c)           \
-    do {                                \
-        val =   clip(*a++);             \
-        val |= (clip(*b++) << 10) |     \
-               (clip(*c++) << 20);      \
-        put_le32(&data, val);           \
-    } while (0)
-
-    for (h = 0; h < height; h++) {
-        uint32_t val = 0;
-        for (w = 0; w < width - 5; w += 6) {
-            WRITE_PIXELS(u, y, v);
-            WRITE_PIXELS(y, u, y);
-            WRITE_PIXELS(v, y, u);
-            WRITE_PIXELS(y, v, y);
-        }
-        if (w < width - 1) {
-            WRITE_PIXELS(u, y, v);
-
-            val = clip(*y++);
-            if (w == width - 2)
-                put_le32(&data, val);
-#undef WRITE_PIXELS
-        }
-        if (w < width - 3) {
-            val |= (clip(*u++) << 10) | (clip(*y++) << 20);
-            put_le32(&data, val);
-
-            val = clip(*v++) | (clip(*y++) << 10);
-            put_le32(&data, val);
-        }
-
-        memset(data, 0, line_padding);
-        data += line_padding;
-
-        y += pic->p[0].i_pitch / 2 - width;
-        u += pic->p[1].i_pitch / 2 - width / 2;
-        v += pic->p[2].i_pitch / 2 - width / 2;
-    }
 }
 
 static void send_AFD(uint8_t afdcode, uint8_t ar, uint8_t *buf)
@@ -566,7 +533,51 @@ static void send_AFD(uint8_t afdcode, uint8_t ar, uint8_t *buf)
     }
 }
 
-int DBMSDIOutput::Process(picture_t *picture)
+int DBMSDIOutput::Process()
+{
+    if(!p_output || !b_running)
+        return VLC_EGENERIC;
+    if(videoStream)
+    {
+        picture_t *p;
+        while((p = videoStream->Dequeue()))
+            ProcessVideo(p);
+    }
+    if(audioStream)
+    {
+        block_t *p;
+        while((p = audioStream->Dequeue()))
+            ProcessAudio(p);
+    }
+    return VLC_SUCCESS;
+}
+
+int DBMSDIOutput::ProcessAudio(block_t *p_block)
+{
+    if (!p_output)
+    {
+        block_Release(p_block);
+        return VLC_EGENERIC;
+    }
+
+    p_block->i_pts -= offset;
+
+    uint32_t sampleFrameCount = p_block->i_nb_samples;
+    uint32_t written;
+    HRESULT result = p_output->ScheduleAudioSamples(
+            p_block->p_buffer, p_block->i_nb_samples, p_block->i_pts, CLOCK_FREQ, &written);
+
+    if (result != S_OK)
+        msg_Err(p_stream, "Failed to schedule audio sample: 0x%X", result);
+    else if (sampleFrameCount != written)
+        msg_Err(p_stream, "Written only %d samples out of %d", written, sampleFrameCount);
+
+    block_Release(p_block);
+
+    return result != S_OK ? VLC_EGENERIC : VLC_SUCCESS;
+}
+
+int DBMSDIOutput::ProcessVideo(picture_t *picture)
 {
     mtime_t now = vlc_tick_now();
 
@@ -605,8 +616,8 @@ int DBMSDIOutput::Process(picture_t *picture)
 
     HRESULT result;
     int w, h, stride, length;
-//    w = i_width;
-//    h = i_height;
+    w = video.configuredfmt.video.i_visible_width;
+    h = video.configuredfmt.video.i_visible_height;
 
     IDeckLinkMutableVideoFrame *pDLVideoFrame;
     result = p_output->CreateVideoFrame(w, h, w*3,
@@ -624,7 +635,6 @@ int DBMSDIOutput::Process(picture_t *picture)
 
     if (video.tenbits) {
         IDeckLinkVideoFrameAncillary *vanc;
-        int line;
         void *buf;
 
         result = p_output->CreateAncillaryData(
@@ -634,15 +644,14 @@ int DBMSDIOutput::Process(picture_t *picture)
             goto end;
         }
 
-        line = var_InheritInteger(p_stream, VIDEO_CFG_PREFIX "afd-line");
-        result = vanc->GetBufferForVerticalBlankingLine(line, &buf);
+        result = vanc->GetBufferForVerticalBlankingLine(ancillary.afd_line, &buf);
         if (result != S_OK) {
-            msg_Err(p_stream, "Failed to get VBI line %d: %d", line, result);
+            msg_Err(p_stream, "Failed to get VBI line %u: %d", ancillary.afd_line, result);
             goto end;
         }
-        send_AFD(video.afd, video.ar, (uint8_t*)buf);
+        send_AFD(ancillary.afd, ancillary.ar, (uint8_t*)buf);
 
-        v210_convert(frame_bytes, picture, stride);
+        sdi::V210::Convert(picture, stride, frame_bytes);
 
         result = pDLVideoFrame->SetAncillaryData(vanc);
         vanc->Release();
@@ -683,9 +692,14 @@ int DBMSDIOutput::Process(picture_t *picture)
         msg_Err(p_stream, "Delaying: offset now %" PRId64, offset);
     }
 
+    picture_Release(picture);
+    if (pDLVideoFrame)
+        pDLVideoFrame->Release();
+
     return VLC_SUCCESS;
 
 end:
+    picture_Release(picture);
     if (pDLVideoFrame)
         pDLVideoFrame->Release();
     return VLC_EGENERIC;
