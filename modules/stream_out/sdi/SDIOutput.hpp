@@ -25,10 +25,12 @@
 
 namespace sdi_sout
 {
+    class SDIAudioMultiplex;
+
     class SDIOutput
     {
         public:
-            SDIOutput(sout_stream_t *);
+            SDIOutput(sout_stream_t *, uint8_t);
             virtual ~SDIOutput();
             virtual int Open() = 0;
             virtual int Process() = 0;
@@ -40,8 +42,8 @@ namespace sdi_sout
         protected:
             sout_stream_t *p_stream;
             PictureStreamOutputBuffer videoBuffer;
-            BlockStreamOutputBuffer audioBuffer;
             BlockStreamOutputBuffer captionsBuffer;
+            SDIAudioMultiplex *audioMultiplex;
 
         private:
             static void *SoutCallback_Add(sout_stream_t *, const es_format_t *);

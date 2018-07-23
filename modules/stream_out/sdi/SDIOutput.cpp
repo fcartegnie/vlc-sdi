@@ -23,11 +23,12 @@
 
 #include "SDIOutput.hpp"
 #include "SDIStream.hpp"
+#include "SDIAudioMultiplex.hpp"
 #include <vlc_sout.h>
 
 using namespace sdi_sout;
 
-SDIOutput::SDIOutput(sout_stream_t *p_stream_)
+SDIOutput::SDIOutput(sout_stream_t *p_stream_, uint8_t i_audio_channels)
 {
     p_stream = p_stream_;
     p_stream->pf_add     = SoutCallback_Add;
@@ -36,13 +37,14 @@ SDIOutput::SDIOutput(sout_stream_t *p_stream_)
     p_stream->pf_flush   = SoutCallback_Flush;
     p_stream->pf_control = SoutCallback_Control;
     p_stream->pace_nocontrol = true;
+    audioMultiplex = new SDIAudioMultiplex( i_audio_channels );
 }
 
 SDIOutput::~SDIOutput()
 {
     videoBuffer.FlushQueued();
-    audioBuffer.FlushQueued();
     captionsBuffer.FlushQueued();
+    delete audioMultiplex;
 }
 
 AbstractStream *SDIOutput::Add(const es_format_t *fmt)
@@ -52,7 +54,28 @@ AbstractStream *SDIOutput::Add(const es_format_t *fmt)
     if(fmt->i_cat == VIDEO_ES)
         s = new VideoDecodedStream(VLC_OBJECT(p_stream), id, &videoBuffer);
     else if(fmt->i_cat == AUDIO_ES)
-        s = new AudioDecodedStream(VLC_OBJECT(p_stream), id, &audioBuffer);
+    {
+        if(fmt->i_id < 0)
+            return NULL;
+        std::vector<uint8_t> slots = audioMultiplex->config.getFreeSubFrameSlots();
+        if(slots.size() < 2)
+            return NULL;
+        slots.resize(2);
+        if(!audioMultiplex->config.addMapping(id, slots))
+            return NULL;
+        SDIAudioMultiplexBuffer *buffer = audioMultiplex->config.getBufferForStream(id);
+        if(!buffer)
+            return NULL;
+        s = new AudioDecodedStream(VLC_OBJECT(p_stream), id, buffer);
+        if(s)
+        {
+            for(size_t i=0; i<slots.size(); i++)
+            {
+                audioMultiplex->config.setSubFrameSlotUsed(slots[i]);
+                audioMultiplex->SetSubFrameSource(slots[i], buffer, AES3AudioSubFrameIndex(i));
+            }
+        }
+    }
     else if(fmt->i_cat == SPU_ES && fmt->i_codec == VLC_CODEC_CEA608)
         s = new CaptionsStream(VLC_OBJECT(p_stream), id, &captionsBuffer);
     else
