@@ -4,6 +4,7 @@
 
 #include "DBMSDIOutput.hpp"
 #include "SDIStream.hpp"
+#include "SDIAudioMultiplex.hpp"
 #include "Ancillary.hpp"
 #include "V210.hpp"
 
@@ -19,7 +20,7 @@
 using namespace sdi_sout;
 
 DBMSDIOutput::DBMSDIOutput(sout_stream_t *p_stream) :
-    SDIOutput(p_stream)
+    SDIOutput(p_stream, var_InheritInteger(p_stream, CFG_PREFIX "channels"))
 {
     p_card = NULL;
     p_output = NULL;
@@ -29,13 +30,12 @@ DBMSDIOutput::DBMSDIOutput(sout_stream_t *p_stream) :
     video.tenbits = var_InheritBool(p_stream, CFG_PREFIX "tenbits");
     video.nosignal_delay = var_InheritInteger(p_stream, CFG_PREFIX "nosignal-delay");
     video.pic_nosignal = NULL;
-    audio.i_rate = var_InheritInteger(p_stream, CFG_PREFIX "audio-rate");;
+    audio.i_channels = var_InheritInteger(p_stream, CFG_PREFIX "channels");
     ancillary.afd = var_InheritInteger(p_stream, CFG_PREFIX "afd");
     ancillary.ar = var_InheritInteger(p_stream, CFG_PREFIX "ar");
     ancillary.afd_line = var_InheritInteger(p_stream, CFG_PREFIX "afd-line");
     ancillary.captions_line = 21;
     videoStream = NULL;
-    audioStream = NULL;
     captionsStream = NULL;
     lasttimestamp = 0;
     b_running = false;
@@ -43,6 +43,11 @@ DBMSDIOutput::DBMSDIOutput(sout_stream_t *p_stream) :
 
 DBMSDIOutput::~DBMSDIOutput()
 {
+    while(!audioStreams.empty())
+    {
+        delete audioStreams.front();
+        audioStreams.pop_front();
+    }
     if(video.pic_nosignal)
         picture_Release(video.pic_nosignal);
     es_format_Clean(&video.configuredfmt);
@@ -72,12 +77,18 @@ AbstractStream *DBMSDIOutput::Add(const es_format_t *fmt)
             videoStream->setCaptionsOutputBuffer(&captionsBuffer);
         }
     }
-    else if(fmt->i_cat == AUDIO_ES && audio.i_rate && !audioStream)
+    else if(fmt->i_cat == AUDIO_ES && audio.i_channels)
     {
-        if(ConfigureAudio(&fmt->audio) == VLC_SUCCESS)
+        if(audio.configuredfmt.i_codec || ConfigureAudio(&fmt->audio) == VLC_SUCCESS)
+        {
+            AudioDecodedStream *audioStream;
             s = audioStream = dynamic_cast<AudioDecodedStream *>(SDIOutput::Add(fmt));
-        if(audioStream)
-            audioStream->setOutputFormat(&audio.configuredfmt);
+            if(audioStream)
+            {
+                audioStream->setOutputFormat(&audio.configuredfmt);
+                audioStreams.push_back(audioStream);
+            }
+        }
     }
     else if(fmt->i_cat == SPU_ES && fmt->i_codec == VLC_CODEC_CEA608)
     {
@@ -88,7 +99,7 @@ AbstractStream *DBMSDIOutput::Add(const es_format_t *fmt)
     {
         msg_Dbg(p_stream, "accepted stream %4.4s id %d",
                           &fmt->i_codec, fmt->i_id);
-        if( videoStream && (audioStream || audio.i_rate <= 0) )
+        if( videoStream && (!audioStreams.empty() || audio.i_channels == 0) )
             Start();
     }
     else
@@ -104,8 +115,10 @@ void DBMSDIOutput::Del(AbstractStream *id)
 {
     if(videoStream == id)
         videoStream = NULL;
-    else if(audioStream == id)
-        audioStream = NULL;
+    else if(dynamic_cast<AudioDecodedStream *>(id))
+    {
+        audioStreams.remove(static_cast<AudioDecodedStream *>(id));
+    }
     SDIOutput::Del(id);
 }
 
@@ -297,6 +310,15 @@ int DBMSDIOutput::ConfigureAudio(const audio_format_t *)
 {
     HRESULT result;
 
+    audio.configuredfmt.i_codec =
+    audio.configuredfmt.audio.i_format = VLC_CODEC_S16N;
+    audio.configuredfmt.audio.i_channels = 2;
+    audio.configuredfmt.audio.i_physical_channels = AOUT_CHANS_STEREO;
+    audio.configuredfmt.audio.i_rate = 48000;
+    audio.configuredfmt.audio.i_bitspersample = 16;
+    audio.configuredfmt.audio.i_blockalign = 2 * 16 / 8;
+    //audio.configuredfmt.audio.i_frame_length = BLOCK_SIZE_BYTES;
+
     if(FAKE_DRIVER)
         return VLC_SUCCESS;
 
@@ -306,21 +328,13 @@ int DBMSDIOutput::ConfigureAudio(const audio_format_t *)
     if(!video.configuredfmt.i_codec && b_running)
         return VLC_EGENERIC;
 
-    if (audio.i_rate > 0)
+    if (audio.i_channels)
     {
-        audio.configuredfmt.i_codec =
-        audio.configuredfmt.audio.i_format = VLC_CODEC_S16N;
-        audio.configuredfmt.audio.i_channels = 2;
-        audio.configuredfmt.audio.i_physical_channels = AOUT_CHANS_STEREO;
-        audio.configuredfmt.audio.i_rate = 48000;
-        audio.configuredfmt.audio.i_bitspersample = 16;
-        audio.configuredfmt.audio.i_blockalign = 2 * 16 / 8;
-        audio.configuredfmt.audio.i_frame_length = FRAME_SIZE;
-
+        uint8_t maxchannels = audioMultiplex->config.getMultiplexedFramesCount() * 2;
         result = p_output->EnableAudioOutput(
                     bmdAudioSampleRate48kHz,
                     bmdAudioSampleType16bitInteger,
-                    2,
+                    maxchannels,
                     bmdAudioOutputStreamTimestamped);
         CHECK("Could not start audio output");
     }
@@ -527,9 +541,15 @@ int DBMSDIOutput::Process()
     while((p = reinterpret_cast<picture_t *>(videoBuffer.Dequeue())))
         ProcessVideo(p, reinterpret_cast<block_t *>(captionsBuffer.Dequeue()));
 
-    block_t *b;
-    while((b = reinterpret_cast<block_t *>(audioBuffer.Dequeue())))
-        ProcessAudio(b);
+    //unsigned blocksamples = audioMultiplex->config.getMaxSamplesForBlockSize(SAMPLES_PER_FRAME);
+    while(audioMultiplex->availableSamples() >= SAMPLES_PER_FRAME)
+    {
+          block_t *out = audioMultiplex->Extract(SAMPLES_PER_FRAME);
+          if(out)
+          {
+              ProcessAudio(out);
+          }
+    }
 
     return VLC_SUCCESS;
 }

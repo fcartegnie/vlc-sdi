@@ -19,12 +19,12 @@ AbstractStreamOutputBuffer::~AbstractStreamOutputBuffer()
 {
 }
 
-void AbstractStreamOutputBuffer::Enqueue(void *p)
+void AbstractQueueStreamOutputBuffer::Enqueue(void *p)
 {
     queued.push(p);
 }
 
-void *AbstractStreamOutputBuffer::Dequeue()
+void *AbstractQueueStreamOutputBuffer::Dequeue()
 {
     void *p = NULL;
     if(!queued.empty())
@@ -36,7 +36,7 @@ void *AbstractStreamOutputBuffer::Dequeue()
 }
 
 BlockStreamOutputBuffer::BlockStreamOutputBuffer()
-    : AbstractStreamOutputBuffer()
+    : AbstractQueueStreamOutputBuffer()
 {
 
 }
@@ -55,7 +55,7 @@ void BlockStreamOutputBuffer::FlushQueued()
 
 
 PictureStreamOutputBuffer::PictureStreamOutputBuffer()
-    : AbstractStreamOutputBuffer()
+    : AbstractQueueStreamOutputBuffer()
 {
 
 }

@@ -62,15 +62,10 @@
     "This value should be a FOURCC code in textual " \
     "form, e.g. \"ntsc\".")
 
-#define AUDIO_CONNECTION_TEXT N_("Audio connection")
-#define AUDIO_CONNECTION_LONGTEXT N_(\
-    "Audio connection for DeckLink output.")
-
-
-#define RATE_TEXT N_("Audio samplerate (Hz)")
-#define RATE_LONGTEXT N_(\
-    "Audio sampling rate (in hertz) for DeckLink output. " \
-    "0 disables audio output.")
+#define CHANNELS_TEXT N_("Number of audio channels")
+#define CHANNELS_LONGTEXT N_(\
+    "Number of output channels for DeckLink output. " \
+"Must be 2, 8 or 16. 0 disables audio output.")
 
 #define VIDEO_CONNECTION_TEXT N_("Video connection")
 #define VIDEO_CONNECTION_LONGTEXT N_(\
@@ -204,8 +199,7 @@ vlc_module_begin ()
                  NOSIGNAL_IMAGE_TEXT, NOSIGNAL_IMAGE_LONGTEXT)
 
     set_section(N_("DeckLink Audio Options"), NULL)
-    add_obsolete_string("audio-connection")
-    add_integer(CFG_PREFIX "audio-rate", 48000,
-                RATE_TEXT, RATE_LONGTEXT, true)
+    add_integer_with_range(CFG_PREFIX "channels", 2, 0, 16,
+                CHANNELS_TEXT, CHANNELS_LONGTEXT, true)
 
 vlc_module_end ()

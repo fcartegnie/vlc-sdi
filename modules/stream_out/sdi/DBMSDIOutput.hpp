@@ -6,6 +6,7 @@
 #include <vlc_es.h>
 
 #include <DeckLinkAPI.h>
+#include <list>
 
 namespace sdi_sout
 {
@@ -21,7 +22,7 @@ namespace sdi_sout
 
         protected:
             VideoDecodedStream *videoStream;
-            AudioDecodedStream *audioStream;
+            std::list<AudioDecodedStream *> audioStreams;
             CaptionsStream *captionsStream;
             int ProcessVideo(picture_t *, block_t *);
             int ProcessAudio(block_t *);
@@ -47,7 +48,7 @@ namespace sdi_sout
             struct
             {
                 es_format_t configuredfmt;
-                int i_rate;
+                uint8_t i_channels;
             } audio;
 
             struct
