@@ -35,6 +35,7 @@ DBMSDIOutput::DBMSDIOutput(sout_stream_t *p_stream) :
     ancillary.afd_line = var_InheritInteger(p_stream, CFG_PREFIX "afd-line");
     videoStream = NULL;
     audioStream = NULL;
+    lasttimestamp = 0;
     b_running = false;
 }
 
@@ -46,7 +47,8 @@ DBMSDIOutput::~DBMSDIOutput()
     es_format_Clean(&audio.configuredfmt);
     if(p_output)
     {
-        p_output->StopScheduledPlayback(0, NULL, 0);
+        BMDTimeValue out;
+        p_output->StopScheduledPlayback(lasttimestamp, &out, timescale);
         p_output->DisableVideoOutput();
         p_output->DisableAudioOutput();
         p_output->Release();
@@ -527,8 +529,12 @@ int DBMSDIOutput::ProcessAudio(block_t *p_block)
 
     if (result != S_OK)
         msg_Err(p_stream, "Failed to schedule audio sample: 0x%X", result);
-    else if (sampleFrameCount != written)
-        msg_Err(p_stream, "Written only %d samples out of %d", written, sampleFrameCount);
+    else
+    {
+        lasttimestamp = __MAX(p_block->i_pts, lasttimestamp);
+        if (sampleFrameCount != written)
+            msg_Err(p_stream, "Written only %d samples out of %d", written, sampleFrameCount);
+    }
 
     block_Release(p_block);
 
@@ -628,6 +634,7 @@ int DBMSDIOutput::doProcessVideo(picture_t *picture)
                 picture->date, result);
         goto end;
     }
+    lasttimestamp = __MAX(picture->date, lasttimestamp);
 
     now = vlc_tick_now() - offset;
 
