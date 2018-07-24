@@ -3,11 +3,9 @@
 #endif
 
 #include "SDIOutputStream.hpp"
-
 #include "sdiout.hpp"
 
 #include <vlc_modules.h>
-#include <vlc_codec.h>
 #include <vlc_meta.h>
 #include <vlc_block.h>
 
@@ -168,6 +166,7 @@ void VideoDecodedStream::setCallbacks()
     dec_cbs.video.format_update = VideoDecCallback_update_format;
     dec_cbs.video.buffer_new = VideoDecCallback_new_buffer;
     dec_cbs.video.queue = VideoDecCallback_queue;
+    dec_cbs.video.queue_cc = VideoDecCallback_queue_cc;
 
     p_decoder->cbs = &dec_cbs;
 }
@@ -177,6 +176,14 @@ void VideoDecodedStream::VideoDecCallback_queue(decoder_t *p_dec, picture_t *p_p
     struct decoder_owner *p_owner;
     p_owner = container_of(p_dec, struct decoder_owner, dec);
     static_cast<VideoDecodedStream *>(p_owner->id)->Output(p_pic);
+}
+
+void VideoDecodedStream::VideoDecCallback_queue_cc(decoder_t *p_dec, block_t *p_block,
+                                                   const decoder_cc_desc_t *)
+{
+    struct decoder_owner *p_owner;
+    p_owner = container_of(p_dec, struct decoder_owner, dec);
+    static_cast<VideoDecodedStream *>(p_owner->id)->QueueCC(p_block);
 }
 
 int VideoDecodedStream::VideoDecCallback_update_format(decoder_t *p_dec)
@@ -284,7 +291,18 @@ void VideoDecodedStream::Output(picture_t *p_pic)
         p_pic = filter_chain_VideoFilter(p_filters_chain, p_pic);
 
     if(p_pic)
-        Enqueue(p_pic);
+    {
+        if(FORCE_INPUT)
+            picture_Release(p_pic);
+        else
+            Enqueue(p_pic);
+    }
+}
+
+void VideoDecodedStream::QueueCC(block_t *p_block)
+{
+    msg_Err(p_stream, "Queuing CC");
+    block_Release(p_block);
 }
 
 AudioDecodedStream::AudioDecodedStream(vlc_object_t *p_stream)
@@ -347,7 +365,12 @@ void AudioDecodedStream::Output(block_t *p_block)
     }
 
     if(p_block)
-      Enqueue(p_block);
+    {
+        if(FORCE_INPUT)
+            block_Release(p_block);
+        else
+            Enqueue(p_block);
+    }
 }
 
 aout_filters_t * AudioDecodedStream::AudioFiltersCreate(const es_format_t *afmt)
@@ -392,4 +415,38 @@ void AudioDecodedStream::setCallbacks()
     dec_cbs.audio.format_update = AudioDecCallback_update_format;
     dec_cbs.audio.queue = AudioDecCallback_queue;
     p_decoder->cbs = &dec_cbs;
+}
+
+CaptionsStream::CaptionsStream(vlc_object_t *p_obj)
+    : AbstractStream(p_obj)
+{
+
+}
+
+CaptionsStream::~CaptionsStream()
+{
+
+}
+
+bool CaptionsStream::init(const es_format_t *fmt)
+{
+    return (fmt->i_codec == VLC_CODEC_CEA608);
+}
+
+int CaptionsStream::Send(block_t *p_block)
+{
+    Enqueue(p_block);
+    return VLC_SUCCESS;
+}
+
+void CaptionsStream::Flush()
+{
+
+}
+
+void CaptionsStream::FlushQueued()
+{
+    block_t *p;
+    while(p = Dequeue())
+        block_Release(p);
 }

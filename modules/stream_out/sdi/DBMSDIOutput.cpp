@@ -35,6 +35,7 @@ DBMSDIOutput::DBMSDIOutput(sout_stream_t *p_stream) :
     ancillary.afd_line = var_InheritInteger(p_stream, CFG_PREFIX "afd-line");
     videoStream = NULL;
     audioStream = NULL;
+    captionsStream = NULL;
     lasttimestamp = 0;
     b_running = false;
 }
@@ -71,6 +72,10 @@ AbstractStream *DBMSDIOutput::Add(const es_format_t *fmt)
         if(ConfigureAudio(&fmt->audio) == VLC_SUCCESS)
             s = audioStream = dynamic_cast<AudioDecodedStream *>(SDIOutput::Add(fmt));
         audioStream->setOutputFormat(&audio.configuredfmt);
+    }
+    else if(fmt->i_cat == SPU_ES && fmt->i_codec == VLC_CODEC_CEA608)
+    {
+        s = captionsStream = dynamic_cast<CaptionsStream *>(SDIOutput::Add(fmt));
     }
 
     if(s)
@@ -501,7 +506,10 @@ int DBMSDIOutput::Process()
     {
         picture_t *p;
         while((p = videoStream->Dequeue()))
-            ProcessVideo(p);
+        {
+            block_t *p_cc = captionsStream ? captionsStream->Dequeue() : NULL;
+            ProcessVideo(p, p_cc);
+        }
     }
     if(audioStream)
     {
@@ -541,7 +549,7 @@ int DBMSDIOutput::ProcessAudio(block_t *p_block)
     return result != S_OK ? VLC_EGENERIC : VLC_SUCCESS;
 }
 
-int DBMSDIOutput::ProcessVideo(picture_t *picture)
+int DBMSDIOutput::ProcessVideo(picture_t *picture, block_t *p_cc)
 {
     mtime_t now = vlc_tick_now();
 
@@ -558,19 +566,21 @@ int DBMSDIOutput::ProcessVideo(picture_t *picture)
 
         picture_Hold(video.pic_nosignal);
         video.pic_nosignal->date = now;
-        doProcessVideo(picture);
+        doProcessVideo(picture, NULL);
     }
 
-    return doProcessVideo(picture);
+    return doProcessVideo(picture, p_cc);
 }
 
-int DBMSDIOutput::doProcessVideo(picture_t *picture)
+int DBMSDIOutput::doProcessVideo(picture_t *picture, block_t *p_cc)
 {
     HRESULT result;
     int w, h, stride, length;
     mtime_t now;
     w = video.configuredfmt.video.i_visible_width;
     h = video.configuredfmt.video.i_visible_height;
+
+if(p_cc) block_Release(p_cc);
 
     IDeckLinkMutableVideoFrame *pDLVideoFrame;
     result = p_output->CreateVideoFrame(w, h, w*3,
