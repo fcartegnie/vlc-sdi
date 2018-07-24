@@ -34,6 +34,7 @@ namespace sdi_sout
 
             BMDTimeScale timescale;
             BMDTimeValue frameduration;
+            vlc_tick_t lasttimestamp;
             /* XXX: workaround card clock drift */
             vlc_tick_t offset;
 
