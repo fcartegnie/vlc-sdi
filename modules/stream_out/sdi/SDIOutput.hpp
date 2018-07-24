@@ -41,6 +41,7 @@ namespace sdi_sout
             sout_stream_t *p_stream;
             PictureStreamOutputBuffer videoBuffer;
             BlockStreamOutputBuffer audioBuffer;
+            BlockStreamOutputBuffer captionsBuffer;
 
         private:
             static void *SoutCallback_Add(sout_stream_t *, const es_format_t *);

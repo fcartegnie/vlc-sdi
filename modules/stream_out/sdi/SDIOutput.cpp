@@ -42,6 +42,7 @@ SDIOutput::~SDIOutput()
 {
     videoBuffer.FlushQueued();
     audioBuffer.FlushQueued();
+    captionsBuffer.FlushQueued();
 }
 
 AbstractStream *SDIOutput::Add(const es_format_t *fmt)
@@ -52,6 +53,8 @@ AbstractStream *SDIOutput::Add(const es_format_t *fmt)
         s = new VideoDecodedStream(VLC_OBJECT(p_stream), id, &videoBuffer);
     else if(fmt->i_cat == AUDIO_ES)
         s = new AudioDecodedStream(VLC_OBJECT(p_stream), id, &audioBuffer);
+    else if(fmt->i_cat == SPU_ES && fmt->i_codec == VLC_CODEC_CEA608)
+        s = new CaptionsStream(VLC_OBJECT(p_stream), id, &captionsBuffer);
     else
         s = NULL;
 

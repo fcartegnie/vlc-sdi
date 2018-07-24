@@ -41,7 +41,8 @@ namespace sdi_sout
         protected:
             VideoDecodedStream *videoStream;
             AudioDecodedStream *audioStream;
-            int ProcessVideo(picture_t *);
+            CaptionsStream *captionsStream;
+            int ProcessVideo(picture_t *, block_t *);
             int ProcessAudio(block_t *);
 
         private:
@@ -72,6 +73,7 @@ namespace sdi_sout
             {
                 uint8_t afd, ar;
                 unsigned afd_line;
+                unsigned captions_line;
             } ancillary;
 
             bool b_running;
@@ -81,7 +83,7 @@ namespace sdi_sout
             const char *ErrorToString(long i_code);
             IDeckLinkDisplayMode * MatchDisplayMode(const video_format_t *,
                                                     BMDDisplayMode = bmdDisplayModeNotSupported);
-            int doProcessVideo(picture_t *);
+            int doProcessVideo(picture_t *, block_t *);
             picture_t * CreateNoSignalPicture(const char*, const video_format_t *);
     };
 }

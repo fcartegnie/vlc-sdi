@@ -52,8 +52,10 @@ DBMSDIOutput::DBMSDIOutput(sout_stream_t *p_stream) :
     ancillary.afd = var_InheritInteger(p_stream, CFG_PREFIX "afd");
     ancillary.ar = var_InheritInteger(p_stream, CFG_PREFIX "ar");
     ancillary.afd_line = var_InheritInteger(p_stream, CFG_PREFIX "afd-line");
+    ancillary.captions_line = 21;
     videoStream = NULL;
     audioStream = NULL;
+    captionsStream = NULL;
     lasttimestamp = 0;
     b_running = false;
 }
@@ -84,7 +86,10 @@ AbstractStream *DBMSDIOutput::Add(const es_format_t *fmt)
         if(ConfigureVideo(&fmt->video) == VLC_SUCCESS)
             s = videoStream = dynamic_cast<VideoDecodedStream *>(SDIOutput::Add(fmt));
         if(videoStream)
+        {
             videoStream->setOutputFormat(&video.configuredfmt);
+            videoStream->setCaptionsOutputBuffer(&captionsBuffer);
+        }
     }
     else if(fmt->i_cat == AUDIO_ES && audio.i_rate && !audioStream)
     {
@@ -92,6 +97,10 @@ AbstractStream *DBMSDIOutput::Add(const es_format_t *fmt)
             s = audioStream = dynamic_cast<AudioDecodedStream *>(SDIOutput::Add(fmt));
         if(audioStream)
             audioStream->setOutputFormat(&audio.configuredfmt);
+    }
+    else if(fmt->i_cat == SPU_ES && fmt->i_codec == VLC_CODEC_CEA608)
+    {
+        s = captionsStream = dynamic_cast<CaptionsStream *>(SDIOutput::Add(fmt));
     }
 
     if(s)
@@ -536,7 +545,7 @@ int DBMSDIOutput::Process()
 
     picture_t *p;
     while((p = reinterpret_cast<picture_t *>(videoBuffer.Dequeue())))
-        ProcessVideo(p);
+        ProcessVideo(p, reinterpret_cast<block_t *>(captionsBuffer.Dequeue()));
 
     block_t *b;
     while((b = reinterpret_cast<block_t *>(audioBuffer.Dequeue())))
@@ -580,7 +589,7 @@ int DBMSDIOutput::ProcessAudio(block_t *p_block)
     return result != S_OK ? VLC_EGENERIC : VLC_SUCCESS;
 }
 
-int DBMSDIOutput::ProcessVideo(picture_t *picture)
+int DBMSDIOutput::ProcessVideo(picture_t *picture, block_t *p_cc)
 {
     mtime_t now = vlc_tick_now();
 
@@ -597,13 +606,13 @@ int DBMSDIOutput::ProcessVideo(picture_t *picture)
 
         picture_Hold(video.pic_nosignal);
         video.pic_nosignal->date = now;
-        doProcessVideo(picture);
+        doProcessVideo(picture, NULL);
     }
 
-    return doProcessVideo(picture);
+    return doProcessVideo(picture, p_cc);
 }
 
-int DBMSDIOutput::doProcessVideo(picture_t *picture)
+int DBMSDIOutput::doProcessVideo(picture_t *picture, block_t *p_cc)
 {
     HRESULT result;
     int w, h, stride, length, ret = VLC_EGENERIC;
@@ -646,6 +655,17 @@ int DBMSDIOutput::doProcessVideo(picture_t *picture)
 
         sdi::AFD afd(ancillary.afd, ancillary.ar);
         afd.FillBuffer(reinterpret_cast<uint8_t*>(buf), stride);
+
+        if(p_cc)
+        {
+            result = vanc->GetBufferForVerticalBlankingLine(ancillary.captions_line, &buf);
+            if (result != S_OK) {
+                msg_Err(p_stream, "Failed to get VBI line %u: %d", ancillary.captions_line, result);
+                goto error;
+            }
+            sdi::Captions captions(p_cc->p_buffer, p_cc->i_buffer, timescale, frameduration);
+            captions.FillBuffer(reinterpret_cast<uint8_t*>(buf), stride);
+        }
 
         sdi::V210::Convert(picture, stride, frame_bytes);
 
@@ -693,6 +713,8 @@ end:
     ret = VLC_SUCCESS;
 
 error:
+    if(p_cc)
+        block_Release(p_cc);
     picture_Release(picture);
     if (pDLVideoFrame)
         pDLVideoFrame->Release();
