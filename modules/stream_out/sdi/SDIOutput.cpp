@@ -31,6 +31,8 @@ AbstractStream *SDIOutput::Add(const es_format_t *fmt)
         s = new VideoDecodedStream(VLC_OBJECT(p_stream));
     else if(fmt->i_cat == AUDIO_ES)
         s = new AudioDecodedStream(VLC_OBJECT(p_stream));
+    else if(fmt->i_cat == SPU_ES && fmt->i_codec == VLC_CODEC_CEA608)
+        s = new CaptionsStream(VLC_OBJECT(p_stream));
     else
         s = NULL;
 
