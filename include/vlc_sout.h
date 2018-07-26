@@ -187,6 +187,7 @@ static inline int sout_MuxControl( sout_mux_t *p_mux, int i_query, ... )
 
 enum sout_stream_query_e {
     SOUT_STREAM_EMPTY,    /* arg1=bool *,       res=can fail (assume true) */
+    SOUT_STREAM_EXTRACT_SUBSTREAMS, /* arg1=bool *,       res=can fail (assume false) */
 };
 
 struct sout_stream_t
