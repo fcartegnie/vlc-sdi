@@ -4,6 +4,7 @@
 
 #include "SDIOutput.hpp"
 #include "SDIStream.hpp"
+#include "SDIAudioMultiplex.hpp"
 #include <vlc_sout.h>
 
 using namespace sdi_sout;
@@ -30,7 +31,8 @@ AbstractStream *SDIOutput::Add(const es_format_t *fmt)
     if(fmt->i_cat == VIDEO_ES)
         s = new VideoDecodedStream(VLC_OBJECT(p_stream));
     else if(fmt->i_cat == AUDIO_ES)
-        s = new AudioDecodedStream(VLC_OBJECT(p_stream));
+        s = new SDIAudioMultiplexAudioStream(VLC_OBJECT(p_stream));
+        //s = new AudioDecodedStream(VLC_OBJECT(p_stream));
     else if(fmt->i_cat == SPU_ES && fmt->i_codec == VLC_CODEC_CEA608)
         s = new CaptionsStream(VLC_OBJECT(p_stream));
     else

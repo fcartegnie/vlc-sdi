@@ -12,6 +12,7 @@ namespace sdi_sout
     class VideoDecodedStream;
     class AudioDecodedStream;
     class CaptionsStream;
+    class SDIAudioMultiplex;
 
     class DBMSDIOutput : public SDIOutput
     {
@@ -27,6 +28,7 @@ namespace sdi_sout
             VideoDecodedStream *videoStream;
             AudioDecodedStream *audioStream;
             CaptionsStream *captionsStream;
+            SDIAudioMultiplex *audioMultiplex;
             int ProcessVideo(picture_t *, block_t *);
             int ProcessAudio(block_t *);
 

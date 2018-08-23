@@ -4,6 +4,7 @@
 
 #include "DBMSDIOutput.hpp"
 #include "SDIStream.hpp"
+#include "SDIAudioMultiplex.hpp"
 #include "Ancillary.hpp"
 #include "V210.hpp"
 
@@ -38,6 +39,7 @@ DBMSDIOutput::DBMSDIOutput(sout_stream_t *p_stream) :
     captionsStream = NULL;
     lasttimestamp = 0;
     b_running = false;
+    audioMultiplex = new SDIAudioMultiplex();
 }
 
 DBMSDIOutput::~DBMSDIOutput()
@@ -516,9 +518,15 @@ int DBMSDIOutput::Process()
     }
     if(audioStream)
     {
-        block_t *p;
+        /*block_t *p;
         while((p = audioStream->Dequeue()))
-            ProcessAudio(p);
+            ProcessAudio(p);*/
+        SDIAudioMultiplexAudioStream *astream = reinterpret_cast<SDIAudioMultiplexAudioStream *>(audioStream);
+        msg_Err(p_stream, "start %ld", astream->bufferStart());
+        //astream->bufferStart();
+//        astream->Extract(FRAME_SIZE, NULL, 2);
+        astream->forwardBy(FRAME_SIZE);
+        //astream->
     }
     return VLC_SUCCESS;
 }
