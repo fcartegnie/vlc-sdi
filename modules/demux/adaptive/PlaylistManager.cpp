@@ -570,6 +570,8 @@ int PlaylistManager::doControl(int i_query, va_list args)
                 return VLC_EGENERIC;
             }
 
+            if(demux.i_firstpcr == VLC_TICK_INVALID) /* seek before read */
+                demux.i_firstpcr = getFirstPlaybackTime();
             demux.i_nzpcr = VLC_TICK_INVALID;
             setBufferingRunState(true);
             break;
@@ -591,6 +593,8 @@ int PlaylistManager::doControl(int i_query, va_list args)
                 return VLC_EGENERIC;
             }
 
+            if(demux.i_firstpcr == VLC_TICK_INVALID) /* seek before read */
+                demux.i_firstpcr = getFirstPlaybackTime();
             demux.i_nzpcr = VLC_TICK_INVALID;
             setBufferingRunState(true);
             break;
