@@ -26,6 +26,7 @@
 #include "../adaptive/tools/Retrieve.hpp"
 #include "../adaptive/http/HTTPConnectionManager.h"
 #include "playlist/Parser.hpp"
+#include "playlist/BasePeriod.h"
 #include <vlc_stream.h>
 #include <vlc_demux.h>
 #include <time.h>
@@ -106,5 +107,13 @@ bool HLSManager::isHTTPLiveStreaming(stream_t *s)
 
 vlc_tick_t HLSManager::getFirstPlaybackTime() const
 {
+    if(demux.i_firstpcr == VLC_TICK_INVALID &&
+       !playlist->isLive())
+    {
+        if(playlist->getFirstPeriod()->getPeriodStart() != VLC_TICK_INVALID)
+            return playlist->getFirstPeriod()->getPeriodStart();
+        else
+            return VLC_TICK_0;
+    }
     return demux.i_firstpcr;
 }
