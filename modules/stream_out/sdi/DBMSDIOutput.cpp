@@ -45,11 +45,11 @@ DBMSDIOutput::DBMSDIOutput(sout_stream_t *p_stream) :
     p_output = NULL;
     offset = 0;
     es_format_Init(&video.configuredfmt, VIDEO_ES, 0);
-    es_format_Init(&audio.configuredfmt, AUDIO_ES, 0);
     video.tenbits = var_InheritBool(p_stream, CFG_PREFIX "tenbits");
     video.nosignal_delay = var_InheritInteger(p_stream, CFG_PREFIX "nosignal-delay");
     video.pic_nosignal = NULL;
     audio.i_channels = var_InheritInteger(p_stream, CFG_PREFIX "channels");
+    audio.b_configured = false;
     ancillary.afd = var_InheritInteger(p_stream, CFG_PREFIX "afd");
     ancillary.ar = var_InheritInteger(p_stream, CFG_PREFIX "ar");
     ancillary.afd_line = var_InheritInteger(p_stream, CFG_PREFIX "afd-line");
@@ -58,6 +58,12 @@ DBMSDIOutput::DBMSDIOutput(sout_stream_t *p_stream) :
     captionsStream = NULL;
     lasttimestamp = 0;
     b_running = false;
+    char *psz_channelsconf = var_InheritString(p_stream, CFG_PREFIX "audio");
+    if(psz_channelsconf)
+    {
+        audioMultiplex->config.parseConfiguration(psz_channelsconf);
+        free(psz_channelsconf);
+    }
 }
 
 DBMSDIOutput::~DBMSDIOutput()
@@ -70,7 +76,6 @@ DBMSDIOutput::~DBMSDIOutput()
     if(video.pic_nosignal)
         picture_Release(video.pic_nosignal);
     es_format_Clean(&video.configuredfmt);
-    es_format_Clean(&audio.configuredfmt);
     if(p_output)
     {
         BMDTimeValue out;
@@ -98,15 +103,12 @@ AbstractStream *DBMSDIOutput::Add(const es_format_t *fmt)
     }
     else if(fmt->i_cat == AUDIO_ES && audio.i_channels)
     {
-        if(audio.configuredfmt.i_codec || ConfigureAudio(&fmt->audio) == VLC_SUCCESS)
+        if(audio.b_configured || ConfigureAudio(&fmt->audio) == VLC_SUCCESS)
         {
             AudioDecodedStream *audioStream;
             s = audioStream = dynamic_cast<AudioDecodedStream *>(SDIOutput::Add(fmt));
             if(audioStream)
-            {
-                audioStream->setOutputFormat(&audio.configuredfmt);
                 audioStreams.push_back(audioStream);
-            }
         }
     }
     else if(fmt->i_cat == SPU_ES && fmt->i_codec == VLC_CODEC_CEA608)
@@ -329,15 +331,6 @@ int DBMSDIOutput::ConfigureAudio(const audio_format_t *)
 {
     HRESULT result;
 
-    audio.configuredfmt.i_codec =
-    audio.configuredfmt.audio.i_format = VLC_CODEC_S16N;
-    audio.configuredfmt.audio.i_channels = 2;
-    audio.configuredfmt.audio.i_physical_channels = AOUT_CHANS_STEREO;
-    audio.configuredfmt.audio.i_rate = 48000;
-    audio.configuredfmt.audio.i_bitspersample = 16;
-    audio.configuredfmt.audio.i_blockalign = 2 * 16 / 8;
-    //audio.configuredfmt.audio.i_frame_length = BLOCK_SIZE_BYTES;
-
     if(FAKE_DRIVER)
         return VLC_SUCCESS;
 
@@ -357,6 +350,7 @@ int DBMSDIOutput::ConfigureAudio(const audio_format_t *)
                     maxchannels,
                     bmdAudioOutputStreamTimestamped);
         CHECK("Could not start audio output");
+        audio.b_configured = true;
     }
     return VLC_SUCCESS;
 

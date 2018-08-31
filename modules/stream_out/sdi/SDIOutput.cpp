@@ -55,25 +55,24 @@ AbstractStream *SDIOutput::Add(const es_format_t *fmt)
         s = new VideoDecodedStream(VLC_OBJECT(p_stream), id, &videoBuffer);
     else if(fmt->i_cat == AUDIO_ES)
     {
-        if(fmt->i_id < 0)
-            return NULL;
-        std::vector<uint8_t> slots = audioMultiplex->config.getFreeSubFrameSlots();
-        if(slots.size() < 2)
-            return NULL;
-        slots.resize(2);
-        if(!audioMultiplex->config.addMapping(id, slots))
-            return NULL;
+        const es_format_t *cfgfmt = audioMultiplex->config.getConfigurationForStream(id);
+        if(!cfgfmt)
+        {
+            if(!audioMultiplex->config.addMapping(id, fmt))
+                return NULL;
+        }
+        cfgfmt = audioMultiplex->config.updateFromRealESConfig(id, fmt);
         SDIAudioMultiplexBuffer *buffer = audioMultiplex->config.getBufferForStream(id);
         if(!buffer)
             return NULL;
-        s = new AudioDecodedStream(VLC_OBJECT(p_stream), id, buffer);
+        AudioDecodedStream *audiostream;
+        s = audiostream = new AudioDecodedStream(VLC_OBJECT(p_stream), id, buffer);
         if(s)
         {
+            audiostream->setOutputFormat(cfgfmt);
+            std::vector<uint8_t> slots = audioMultiplex->config.getConfiguredSlots(id);
             for(size_t i=0; i<slots.size(); i++)
-            {
-                audioMultiplex->config.setSubFrameSlotUsed(slots[i]);
                 audioMultiplex->SetSubFrameSource(slots[i], buffer, AES3AudioSubFrameIndex(i));
-            }
         }
     }
     else if(fmt->i_cat == SPU_ES && fmt->i_codec == VLC_CODEC_CEA608)
