@@ -83,6 +83,7 @@ SDIAudioMultiplexConfig::Mapping::Mapping(const StreamID &id)
     fmt.audio.i_rate = 48000;
     fmt.audio.i_bitspersample = 16;
     ConfigureChannels(2, &fmt);
+    b_decode = true;
 }
 
 SDIAudioMultiplexConfig::Mapping::~Mapping()
@@ -106,6 +107,14 @@ SDIAudioMultiplexConfig::~SDIAudioMultiplexConfig()
 {
     for(size_t i=0; i<mappings.size(); i++)
         delete mappings[i];
+}
+
+bool SDIAudioMultiplexConfig::decode(const StreamID &id) const
+{
+    const Mapping *map = getMappingByID(id);
+    if(map)
+        return map->b_decode;
+    return true;
 }
 
 bool SDIAudioMultiplexConfig::SubFrameSlotUsed(uint8_t i) const
@@ -155,11 +164,17 @@ void SDIAudioMultiplexConfig::parseConfiguration(vlc_object_t *obj, const char *
                 {
                     msg_Dbg(obj,"found declaration for ES %s %d",
                                 (i_id > -1) ? "pid #" : "seq", *pi_id);
+                    bool b_passthrough = false;
                     int i_reserved_chans = 0;
                     std::vector<uint8_t> subframeslots;
                     for(config_chain_t *p = p_config_chain; p; p = p->p_next)
                     {
-                        if(!std::strcmp("chans", p->psz_name) && subframeslots.empty())
+                        if(!std::strcmp("pass", p->psz_name))
+                        {
+                            b_passthrough = true;
+                            msg_Dbg(obj," * mode passthrough set");
+                        }
+                        else if(!std::strcmp("chans", p->psz_name) && subframeslots.empty())
                         {
                             char *end = NULL;
                             int i_val = std::strtol(p->psz_value, &end, 10);
@@ -190,7 +205,9 @@ void SDIAudioMultiplexConfig::parseConfiguration(vlc_object_t *obj, const char *
                     }
 
                     bool b_success = false;
-                    if(subframeslots.empty() && i_reserved_chans)
+                    if(b_passthrough)
+                        b_success = addMappingPassthrough(StreamID(i_id, i_seqid));
+                    else if(subframeslots.empty() && i_reserved_chans)
                         b_success = addMapping(StreamID(i_id, i_seqid), i_reserved_chans);
                     else if(!subframeslots.empty())
                         b_success = addMapping(StreamID(i_id, i_seqid), subframeslots);
@@ -210,13 +227,20 @@ void SDIAudioMultiplexConfig::parseConfiguration(vlc_object_t *obj, const char *
     }
 }
 
-std::vector<uint8_t> SDIAudioMultiplexConfig::getFreeSubFrameSlots() const
+std::vector<uint8_t> SDIAudioMultiplexConfig::getFreeSubFrameSlots(bool b_aligned) const
 {
     std::vector<uint8_t> slots;
     for(uint8_t i=0; i<getMultiplexedFramesCount() * 2; i++)
     {
         if(!SubFrameSlotUsed(i))
             slots.push_back(i);
+    }
+
+    for( ; b_aligned && slots.size() >= 2; slots.erase(slots.begin()))
+    {
+        /* get aligned subframes pair */
+        if((slots[0] & 1) == 0 && slots[1] == slots[0] + 1)
+            break;
     }
 
     return slots;
@@ -246,6 +270,19 @@ bool SDIAudioMultiplexConfig::addMapping(const StreamID &id, unsigned channels)
         return false;
     slots.resize(channels);
     return addMapping(id, slots);
+}
+
+bool SDIAudioMultiplexConfig::addMappingPassthrough(const StreamID &id, std::vector<uint8_t> slots)
+{
+    if(slots.empty())
+        slots = getFreeSubFrameSlots(true);
+    if(slots.size() < 2)
+        return false;
+    slots.resize(2);
+    bool b = addMapping(id, slots);
+    if(b)
+        getMappingByID(id)->b_decode = false;
+    return b;
 }
 
 bool SDIAudioMultiplexConfig::addMapping(const StreamID &id, std::vector<uint8_t> subframeslots)
@@ -342,6 +379,19 @@ unsigned SDIAudioMultiplex::availableSamples(vlc_tick_t from) const
     return samples < std::numeric_limits<unsigned>::max() ? samples : 0;
 }
 
+unsigned SDIAudioMultiplex::alignedInterleaveInSamples(unsigned i_wanted) const
+{
+    unsigned i_align = i_wanted;
+    for(size_t i=0; i<MAX_AES3_AUDIO_FRAMES; i++)
+    {
+        if(!framesources[i].subframe0.available())
+            i_align = std::min(i_align, framesources[i].subframe0.alignedInterleaveInSamples(i_wanted));
+        if(!framesources[i].subframe1.available())
+            i_align = std::min(i_align, framesources[i].subframe1.alignedInterleaveInSamples(i_wanted));
+    }
+    return i_align;
+}
+
 vlc_tick_t SDIAudioMultiplex::bufferStart() const
 {
     vlc_tick_t start = VLC_TICK_INVALID;
@@ -436,7 +486,7 @@ block_t * SDIAudioMultiplex::Extract(unsigned samples)
     }
 
     for(unsigned i=0; i<MAX_AES3_AUDIO_FRAMES; i++)
-        framesources[i].tagConsumed(samples);
+        framesources[i].tagConsumed(start, samples);
     for(unsigned i=0; i<MAX_AES3_AUDIO_FRAMES; i++)
         framesources[i].flushConsumed();
 

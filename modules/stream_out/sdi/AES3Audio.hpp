@@ -49,13 +49,16 @@ namespace sdi_sout
             vlc_tick_t bufferStart() const;
             vlc_tick_t bufferEnd() const;
             unsigned availableSamples(vlc_tick_t) const;
+            unsigned alignedInterleaveInSamples(unsigned) const;
             void push(block_t *);
             void read(void *, unsigned, unsigned,
                       const AES3AudioSubFrameIndex &,
                       const AES3AudioSubFrameIndex &, unsigned);
             void flushConsumed();
             void tagConsumed(unsigned);
+            void tagConsumed(vlc_tick_t, unsigned);
             void forwardTo(vlc_tick_t);
+            void setBlockAligned();
 
         private:
             size_t   FramesToBytes(unsigned) const;
@@ -66,6 +69,7 @@ namespace sdi_sout
             mutable std::mutex bytestream_mutex;
             uint8_t buffersubframes;
             unsigned toconsume;
+            bool b_blockaligned;
     };
 
     class AES3AudioSubFrameSource
@@ -77,9 +81,10 @@ namespace sdi_sout
             void copy(void *, unsigned count, unsigned,
                       const AES3AudioSubFrameIndex &, unsigned width);
             void flushConsumed();
-            void tagConsumed(unsigned);
+            void tagConsumed(vlc_tick_t, unsigned);
             void forwardTo(vlc_tick_t t);
             unsigned availableSamples(vlc_tick_t) const;
+            unsigned alignedInterleaveInSamples(unsigned) const;
             const AES3AudioSubFrameIndex & index() const;
             bool available() const;
 
@@ -95,8 +100,9 @@ namespace sdi_sout
             vlc_tick_t bufferStartTime() const;
             unsigned samplesUpToTime(vlc_tick_t) const;
             unsigned availableSamples(vlc_tick_t) const;
+            unsigned alignedInterleaveInSamples(unsigned) const;
             void flushConsumed();
-            void tagConsumed(unsigned);
+            void tagConsumed(vlc_tick_t, unsigned);
             void forwardTo(vlc_tick_t t);
             AES3AudioSubFrameSource subframe0;
             AES3AudioSubFrameSource subframe1;

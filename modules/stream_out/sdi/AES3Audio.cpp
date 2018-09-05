@@ -32,6 +32,7 @@ AES3AudioBuffer::AES3AudioBuffer(unsigned count)
     setSubFramesCount(count);
     block_BytestreamInit(&bytestream);
     toconsume = 0;
+    b_blockaligned = false;
 }
 
 AES3AudioBuffer::~AES3AudioBuffer()
@@ -107,6 +108,32 @@ void AES3AudioBuffer::flushConsumed()
     }
 }
 
+void AES3AudioBuffer::tagConsumed(vlc_tick_t from, unsigned f)
+{
+    if(bufferStart() == VLC_TICK_INVALID)
+    {
+        f = 0;
+    }
+    else if(from > bufferStart())
+    {
+        unsigned pre = TicksDurationToFrames(from - bufferStart());
+        if(pre > f)
+            f = 0;
+        else
+            f -= pre;
+    }
+    else if(from < bufferStart())
+    {
+        unsigned post = TicksDurationToFrames(bufferStart() - from);
+        if(post >= f)
+            f = 0;
+        else
+            f -= post;
+    }
+
+    tagConsumed(f);
+}
+
 void AES3AudioBuffer::tagConsumed(unsigned f)
 {
     assert(toconsume == 0 || toconsume == f);
@@ -149,8 +176,36 @@ unsigned AES3AudioBuffer::availableSamples(vlc_tick_t from) const
     bytestream_mutex.lock();
     unsigned samples = BytesToFrames(block_BytestreamRemaining(&bytestream));
     bytestream_mutex.unlock();
-    unsigned offset = TicksDurationToFrames(from - start);
-    return samples + offset;
+
+    if(start > from)
+    {
+        unsigned offset = TicksDurationToFrames(start - from);
+        samples += offset;
+    }
+    else if(start < from)
+    {
+        unsigned offset = TicksDurationToFrames(from - start);
+        if(samples > offset)
+            samples -= offset;
+        else
+            samples = 0;
+    }
+    return samples;
+}
+
+unsigned AES3AudioBuffer::alignedInterleaveInSamples(unsigned i_wanted) const
+{
+    if(!b_blockaligned)
+        return i_wanted;
+    if(!bytestream.p_block)
+        return i_wanted; /* no care, won't be able to read */
+    unsigned i_block_bytes = bytestream.p_block->i_buffer - bytestream.i_block_offset;
+    return BytesToFrames(i_block_bytes);
+}
+
+void AES3AudioBuffer::setBlockAligned()
+{
+    b_blockaligned = true;
 }
 
 AES3AudioSubFrameSource::AES3AudioSubFrameSource()
@@ -188,10 +243,10 @@ void AES3AudioSubFrameSource::flushConsumed()
         aes3AudioBuffer->flushConsumed();
 }
 
-void AES3AudioSubFrameSource::tagConsumed(unsigned count)
+void AES3AudioSubFrameSource::tagConsumed(vlc_tick_t from, unsigned count)
 {
     if(aes3AudioBuffer)
-        aes3AudioBuffer->tagConsumed(count);
+        aes3AudioBuffer->tagConsumed(from, count);
 }
 
 void AES3AudioSubFrameSource::forwardTo(vlc_tick_t t)
@@ -215,6 +270,13 @@ unsigned AES3AudioSubFrameSource::availableSamples(vlc_tick_t from) const
     if(aes3AudioBuffer == NULL)
         return 0;
     return aes3AudioBuffer->availableSamples(from);
+}
+
+unsigned AES3AudioSubFrameSource::alignedInterleaveInSamples(unsigned n) const
+{
+    if(aes3AudioBuffer == NULL)
+        return 0;
+    return aes3AudioBuffer->alignedInterleaveInSamples(n);
 }
 
 AES3AudioFrameSource::AES3AudioFrameSource()
@@ -252,16 +314,26 @@ unsigned AES3AudioFrameSource::availableSamples(vlc_tick_t from) const
         return subframe1.availableSamples(from);
 }
 
+unsigned AES3AudioFrameSource::alignedInterleaveInSamples(unsigned i_wanted) const
+{
+    unsigned a0 = i_wanted, a1 = i_wanted;
+    if(!subframe0.available())
+        a0 = subframe0.alignedInterleaveInSamples(i_wanted);
+    if(!subframe1.available())
+        a1 = subframe1.alignedInterleaveInSamples(i_wanted);
+    return std::max(a0, a1);
+}
+
 void AES3AudioFrameSource::flushConsumed()
 {
     subframe0.flushConsumed();
     subframe1.flushConsumed();
 }
 
-void AES3AudioFrameSource::tagConsumed(unsigned samples)
+void AES3AudioFrameSource::tagConsumed(vlc_tick_t from, unsigned samples)
 {
-    subframe0.tagConsumed(samples);
-    subframe1.tagConsumed(samples);
+    subframe0.tagConsumed(from, samples);
+    subframe1.tagConsumed(from, samples);
 }
 
 void AES3AudioFrameSource::forwardTo(vlc_tick_t t)

@@ -504,11 +504,19 @@ int DBMSDIOutput::Process()
     picture_t *p;
     while((p = reinterpret_cast<picture_t *>(videoBuffer.Dequeue())))
     {
+        const unsigned i_samples_per_frame =
+                audioMultiplex->alignedInterleaveInSamples(SAMPLES_PER_FRAME);
+
+        audioMultiplex->Debug(VLC_OBJECT(p_stream));
         vlc_tick_t bufferStart = audioMultiplex->bufferStart();
+/*        msg_Err(p_stream,"%d %d %d %d", bufferStart <= p->date,
+                audioMultiplex->availableSamples(bufferStart) >= i_samples_per_frame,
+                audioMultiplex->availableSamples(bufferStart), i_samples_per_frame);*/
         while(bufferStart <= p->date &&
-              audioMultiplex->availableSamples(bufferStart) >= SAMPLES_PER_FRAME)
+              audioMultiplex->availableSamples(bufferStart) >= i_samples_per_frame)
         {
-              block_t *out = audioMultiplex->Extract(SAMPLES_PER_FRAME);
+//            msg_Err(p_stream,"extract");
+            block_t *out = audioMultiplex->Extract(i_samples_per_frame);
             if(out)
                   ProcessAudio(out);
             else break;

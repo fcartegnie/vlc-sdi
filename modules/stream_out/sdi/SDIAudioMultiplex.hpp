@@ -49,15 +49,17 @@ namespace sdi_sout
             const es_format_t * getConfigurationForStream(const StreamID &) const;
             const es_format_t * updateFromRealESConfig(const StreamID &,
                                                        const es_format_t *);
+            bool decode(const StreamID &) const;
             bool SubFrameSlotUsed(uint8_t) const;
             void setSubFrameSlotUsed(uint8_t);
             void parseConfiguration(vlc_object_t *, const char *);
             uint8_t getMultiplexedFramesCount() const { return framewidth; }
-            std::vector<uint8_t> getFreeSubFrameSlots() const;
+            std::vector<uint8_t> getFreeSubFrameSlots(bool = false) const;
             std::vector<uint8_t> getConfiguredSlots(const StreamID &) const;
 
             bool addMapping(const StreamID &, const es_format_t *);
             bool addMapping(const StreamID &, std::vector<uint8_t>);
+            bool addMappingPassthrough(const StreamID &, std::vector<uint8_t> = std::vector<uint8_t>());
             unsigned getMaxSamplesForBlockSize(size_t) const;
 
         private:
@@ -69,6 +71,7 @@ namespace sdi_sout
                     ~Mapping();
                     StreamID id;
                     es_format_t fmt;
+                    bool b_decode;
                     SDIAudioMultiplexBuffer buffer;
                     std::vector<uint8_t> subframesslots;
             };
@@ -87,6 +90,7 @@ namespace sdi_sout
             ~SDIAudioMultiplex();
             vlc_tick_t bufferStart() const;
             unsigned availableSamples(vlc_tick_t) const;
+            unsigned alignedInterleaveInSamples(unsigned) const;
             block_t * Extract(unsigned);
             unsigned getFreeSubFrameSlots() const;
             void SetSubFrameSource(uint8_t, AES3AudioBuffer *, AES3AudioSubFrameIndex);
