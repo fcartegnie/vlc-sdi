@@ -67,6 +67,8 @@ libstream_out_sdi_plugin_la_SOURCES = stream_out/sdi/sdiout.cpp \
         stream_out/sdi/SDIOutput.hpp \
         stream_out/sdi/SDIStream.cpp \
         stream_out/sdi/SDIStream.hpp \
+        stream_out/sdi/TimedFifo.cpp \
+        stream_out/sdi/TimedFifo.hpp \
         stream_out/sdi/V210.cpp \
         stream_out/sdi/V210.hpp
 sout_LTLIBRARIES += libstream_out_sdi_plugin.la
