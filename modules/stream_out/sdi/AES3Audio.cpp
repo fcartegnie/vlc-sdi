@@ -32,13 +32,14 @@ AES3AudioBuffer::AES3AudioBuffer(vlc_object_t *p_obj, unsigned count)
 {
     obj = p_obj;
     setSubFramesCount(count);
+    block_BytestreamInit(&bytestream);
     toconsume = 0;
     i_codec = VLC_CODEC_S16N;
 }
 
 AES3AudioBuffer::~AES3AudioBuffer()
 {
-
+    block_BytestreamRelease(&bytestream);
 }
 
 void AES3AudioBuffer::setSubFramesCount(uint8_t c)
@@ -49,7 +50,7 @@ void AES3AudioBuffer::setSubFramesCount(uint8_t c)
 void AES3AudioBuffer::push(block_t *p_block)
 {
     bytestream_mutex.lock();
-    blocksfifo.push(p_block);
+    block_BytestreamPush(&bytestream, p_block);
     bytestream_mutex.unlock();
 }
 
@@ -84,7 +85,7 @@ unsigned AES3AudioBuffer::read(void *dstbuf, unsigned count, vlc_tick_t from,
     }
 
 #ifdef SDI_MULTIPLEX_DEBUG
-    unsigned inbuffer = BytesToFrames(blocksfifo.bytesRemaining());
+    unsigned inbuffer = BytesToFrames(block_BytestreamRemaining(&bytestream));
     msg_Dbg(obj, "%4.4s inbuffer %u count %u/%u skip %u pad %u",
             reinterpret_cast<const char *>(&i_codec), inbuffer, count, orig, skip, dstpad);
     assert(count + skip <= inbuffer);
@@ -99,12 +100,12 @@ unsigned AES3AudioBuffer::read(void *dstbuf, unsigned count, vlc_tick_t from,
        size_t dstoffset = sizeof(uint16_t) * ((i + dstpad) * 2 * dstbufframeswidth + dstbufsubframeidx.index());
        if(i_codec != VLC_CODEC_S16N)
        {
-           assert(blocksfifo.getBlockConsumed() == 0 || skip == 0);
-           /*assert(bytestream.p_block->i_buffer < 4 ||
-                  GetWBE(&bytestream.p_block->p_buffer[4]) == 0xf872);*/
+           assert(bytestream.i_block_offset == 0 || skip == 0);
+           assert(bytestream.p_block->i_buffer < 4 ||
+                  GetWBE(&bytestream.p_block->p_buffer[4]) == 0xf872);
        }
        if(dst)
-           blocksfifo.read(&dst[dstoffset], srcoffset, sizeof(uint16_t));
+            block_PeekOffsetBytes(&bytestream, srcoffset, &dst[dstoffset], sizeof(uint16_t));
     }
     bytestream_mutex.unlock();
 
@@ -149,12 +150,15 @@ void AES3AudioBuffer::flushConsumed()
     {
         size_t bytes = FramesToBytes(toconsume);
         bytestream_mutex.lock();
-        blocksfifo.flush(bytes);
+        if(block_SkipBytes(&bytestream, bytes) == VLC_SUCCESS)
+            block_BytestreamFlush(&bytestream);
+        else
+            block_BytestreamEmpty(&bytestream);
         bytestream_mutex.unlock();
 #ifdef SDI_MULTIPLEX_DEBUG
         msg_Dbg(obj, "%4.4s flushed off %zd -> pts %ld",
                 reinterpret_cast<const char *>(&i_codec),
-                blocksfifo.getBlockConsumed(), bufferStart());
+                bytestream.i_block_offset, bufferStart());
 #endif
         toconsume = 0;
     }
@@ -216,9 +220,9 @@ vlc_tick_t AES3AudioBuffer::bufferStart() const
 {
     vlc_tick_t start = VLC_TICK_INVALID;
     bytestream_mutex.lock();
-    start = blocksfifo.head();
-    if(start != VLC_TICK_INVALID)
-        start += FramesToDuration(BytesToFrames(blocksfifo.getBlockConsumed()));
+    if(bytestream.p_block)
+        start = bytestream.p_block->i_pts +
+                FramesToDuration(BytesToFrames(bytestream.i_block_offset));
     bytestream_mutex.unlock();
     return start;
 }
@@ -231,7 +235,7 @@ unsigned AES3AudioBuffer::availableVirtualSamples(vlc_tick_t from) const
 
     bytestream_mutex.lock();
     /* FIXME */
-    unsigned samples = BytesToFrames(blocksfifo.bytesRemaining());
+    unsigned samples = BytesToFrames(block_BytestreamRemaining(&bytestream));
     bytestream_mutex.unlock();
 
     int offset = OffsetToBufferStart(from);
@@ -254,9 +258,9 @@ unsigned AES3AudioBuffer::alignedInterleaveInSamples(vlc_tick_t from, unsigned i
 {
     if(i_codec == VLC_CODEC_S16N)
         return i_wanted;
-    if(blocksfifo.empty())
+    if(!bytestream.p_block)
         return i_wanted; /* no care, won't be able to read */
-    unsigned samples = BytesToFrames(blocksfifo.blockBytesRemaining());
+    unsigned samples = BytesToFrames(bytestream.p_block->i_buffer - bytestream.i_block_offset);
     int offsetsamples = OffsetToBufferStart(from);
     if(offsetsamples > 0)
     {
@@ -270,7 +274,7 @@ unsigned AES3AudioBuffer::alignedInterleaveInSamples(vlc_tick_t from, unsigned i
 #ifdef SDI_MULTIPLEX_DEBUG
     msg_Dbg(obj, "%4.4s interleave samples %u -- ibuf %zd off %zd",
             reinterpret_cast<const char *>(&i_codec), samples,
-            blocksfifo.blockBytesRemaining(), blocksfifo.getBlockConsumed());
+            bytestream.p_block->i_buffer, bytestream.i_block_offset);
 #endif
     return samples;
 }

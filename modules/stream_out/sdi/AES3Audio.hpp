@@ -26,8 +26,6 @@
 #include <mutex>
 #include <vlc_es.h>
 
-#include "TimedFifo.hpp"
-
 #define MAX_AES3_AUDIO_FRAMES     8
 #define MAX_AES3_AUDIO_SUBFRAMES (MAX_AES3_AUDIO_FRAMES * 2)
 
@@ -70,8 +68,7 @@ namespace sdi_sout
             int OffsetToBufferStart(vlc_tick_t t) const;
             unsigned BytesToFrames(size_t) const;
             unsigned TicksDurationToFrames(vlc_tick_t) const;
-            TimedFifo blocksfifo;
-            //block_bytestream_t bytestream;
+            block_bytestream_t bytestream;
             mutable std::mutex bytestream_mutex;
             uint8_t buffersubframes;
             unsigned toconsume;
