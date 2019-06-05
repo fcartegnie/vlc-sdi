@@ -280,6 +280,7 @@ VideoDecodedStream::VideoDecodedStream(vlc_object_t *p_obj,
     :AbstractDecodedStream(p_obj, id, buffer)
 {
     p_filters_chain = NULL;
+    captionsOutputBuffer = NULL;
 }
 
 VideoDecodedStream::~VideoDecodedStream()
@@ -295,7 +296,7 @@ void VideoDecodedStream::setCallbacks()
     dec_cbs.video.format_update = VideoDecCallback_update_format;
     dec_cbs.video.buffer_new = VideoDecCallback_new_buffer;
     dec_cbs.video.queue = VideoDecCallback_queue;
-    dec_cbs.video.queue_cc = VideoDecCallback_queue_cc;
+    dec_cbs.video.queue_cc = captionsOutputBuffer ? VideoDecCallback_queue_cc : NULL;
 
     p_decoder->cbs = &dec_cbs;
 }
