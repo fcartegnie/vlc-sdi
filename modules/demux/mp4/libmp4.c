@@ -1963,6 +1963,13 @@ static int MP4_ReadBox_vpcC( stream_t *p_stream, MP4_Box_t *p_box )
     MP4_READBOX_EXIT( 1 );
 }
 
+static int cmpprimaries( const void *p1, const void *p2 )
+{
+    const uint16_t x1 = *((const uint16_t *) p1);
+    const uint16_t x2 = *((const uint16_t *) p2);
+    return ( x1 < x2 ) ? -1 : (( x1 > x2 ) ? 1 : 0);
+}
+
 static int MP4_ReadBox_SmDm( stream_t *p_stream, MP4_Box_t *p_box )
 {
     MP4_READBOX_ENTER( MP4_Box_data_SmDm_t, NULL );
@@ -1992,6 +1999,26 @@ static int MP4_ReadBox_SmDm( stream_t *p_stream, MP4_Box_t *p_box )
             p_SmDm->primaries[index] = 50000 *
                     (double)p_SmDm->primaries[index] / (double)(1<<16);
     }
+
+    if(p_box->i_type == ATOM_mdcv) /* Ensure GBR order */
+    {
+         uint16_t primaries[3*2];
+         memcpy(primaries, p_SmDm->primaries, sizeof(uint16_t) * 6);
+         /* order by X */
+         qsort(primaries, 3, 2*sizeof(uint16_t), cmpprimaries);
+         if(primaries[1] > primaries[3]) /* G[Y] > B[Y] */
+         {
+             /* sorted as GBR */
+             memcpy(p_SmDm->primaries, primaries, sizeof(uint16_t)*6);
+         }
+         else /* sorted as BGR */
+         {
+             memcpy(&p_SmDm->primaries[0], &primaries[2], sizeof(uint16_t)*2);
+             memcpy(&p_SmDm->primaries[2], &primaries[0], sizeof(uint16_t)*2);
+             memcpy(&p_SmDm->primaries[4], &primaries[4], sizeof(uint16_t)*2);
+         }
+    }
+
     for(int i=0; i<2; i++)
     {
         MP4_GET2BYTES( p_SmDm->white_point[i] );
